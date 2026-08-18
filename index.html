@@ -142,6 +142,11 @@ td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle
 tbody tr:hover{background:var(--surface2)}
 tbody tr.flagged td{background:var(--coral-light)}
 tbody tr.flagged:hover td{background:#F7E2DA}
+.completed-table{width:100%;border-collapse:collapse;font-size:13px}
+.completed-table td{padding:9px 18px;border-bottom:1px solid var(--border);vertical-align:middle}
+.completed-table tr:hover{background:var(--surface2)}
+.completed-table a{color:var(--ink);text-decoration:none;border-bottom:1px solid var(--border-strong)}
+.completed-table a:hover{border-bottom-color:var(--ink)}
 /* CHARTS */
 .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px}
 .chart-box{position:relative;height:260px}
@@ -226,11 +231,6 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
       <select id="q-client" onchange="qState.client=this.value;renderQueue()"><option value="">All clients</option></select>
       <select id="q-requester" onchange="qState.requester=this.value;renderQueue()"><option value="">All requesters</option></select>
       <select id="q-type" onchange="qState.type=this.value;renderQueue()"><option value="">All types</option></select>
-      <div class="seg" id="q-status-seg">
-        <button class="seg-btn active" data-status="open" onclick="qSetStatus('open')">Open</button>
-        <button class="seg-btn" data-status="done" onclick="qSetStatus('done')">Done</button>
-        <button class="seg-btn" data-status="all" onclick="qSetStatus('all')">All</button>
-      </div>
       <div class="toolbar-spacer"></div>
       <button class="btn" onclick="openAddModal()">+ Add request</button>
     </div>
@@ -247,6 +247,30 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
       <div class="legend">
         <span><b>Ranking:</b> deadline + MRR + content health + churn risk + revenue upside + time since last post</span>
         <span>Hover a score to see exactly why it ranked there</span>
+      </div>
+    </div>
+
+    <div id="completed-banner" class="banner warn hidden"></div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title">Completed</div>
+          <div class="section-sub">Posts Millie has finished, newest customer first, with how they did on LinkedIn.</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span class="chip grey" id="completed-synced">—</span>
+          <label style="font-size:12px;color:var(--ink2);display:flex;align-items:center;gap:7px;cursor:pointer">
+            <input type="checkbox" id="completed-measured-only" onchange="renderCompleted()"> Only with data
+          </label>
+        </div>
+      </div>
+      <div class="kpis" id="completed-kpis" style="padding:18px 18px 0;margin-bottom:0"></div>
+      <div id="completed-list" class="section-body flush"></div>
+      <div class="legend">
+        <span><b>Reactions · Comments · Reposts</b> from Lineage, synced periodically from LinkedIn</span>
+        <span><b>ICP rate</b> is the share of engagement from the client's ideal customer profile</span>
+        <span>Impressions are not available for LinkedIn posts, so no reach or engagement rate is shown</span>
       </div>
     </div>
   </div>
@@ -335,23 +359,23 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
   </div>
   <!-- ── PERFORMANCE ───────────────────────────────────────── -->
   <div id="tab-performance" class="tab-content">
-    <div id="lineage-banner" class="banner warn hidden"></div>
+    <div id="perf-banner" class="banner warn hidden"></div>
     <div class="kpis" id="perf-kpis"></div>
 
     <div class="section">
       <div class="section-head">
         <div>
-          <div class="section-title">How Millie's posts performed</div>
-          <div class="section-sub">LinkedIn engagement from Lineage, for the posts that came out of this queue. <b>Impressions are not available for LinkedIn posts</b>, so reach is not shown and no engagement rate is calculated.</div>
+          <div class="section-title">Best performing posts</div>
+          <div class="section-sub">Everything Millie wrote that has LinkedIn data, ranked by engagement. <b>Impressions are not available for LinkedIn posts</b>, so no reach or engagement rate is shown.</div>
         </div>
         <span class="chip grey" id="perf-synced">—</span>
       </div>
       <div class="section-body flush">
         <table id="perf-table">
           <thead><tr>
-            <th>Client</th><th>What was asked for</th><th>Type</th>
-            <th class="num">Reactions</th><th class="num">Comments</th><th class="num">Shares</th>
-            <th class="num">Total</th><th>Delivered</th>
+            <th>Client</th><th>Post</th><th>Type</th><th>Published</th>
+            <th class="num">Reactions</th><th class="num">Comments</th><th class="num">Reposts</th>
+            <th class="num">ICP rate</th><th class="num">Total</th>
           </tr></thead>
           <tbody></tbody>
         </table>
@@ -421,7 +445,7 @@ let lineageNote = null;
 let lineageConfigured = false;
 let lastGoodRefresh = null;
 
-const qState = { search: '', client: '', requester: '', type: '', status: 'open' };
+const qState = { search: '', client: '', requester: '', type: '' };
 
 // ── AUTH ────────────────────────────────────────────────────────
 function showAuthScreen(show) {
@@ -605,6 +629,7 @@ function rebuild() {
   const active = document.querySelector('.tab-content.active');
   if (active && active.id === 'tab-capacity') renderCapacity();
   if (active && active.id === 'tab-coverage') renderCoverage();
+  if (active && active.id === 'tab-performance') renderPerformance();
 }
 
 function populateFilters() {
@@ -625,17 +650,10 @@ function populateFilters() {
 }
 
 // ── QUEUE ───────────────────────────────────────────────────────
-function qSetStatus(s) {
-  qState.status = s;
-  document.querySelectorAll('#q-status-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.status === s));
-  renderQueue();
-}
-
 function queueFiltered() {
   const q = qState.search.trim().toLowerCase();
   return requests.filter(r => {
-    if (qState.status === 'open' && r.status === 'done') return false;
-    if (qState.status === 'done' && r.status !== 'done') return false;
+    if (r.status === 'done') return false;          // completed work has its own widget
     if (qState.client && r.accountName !== qState.client) return false;
     if (qState.requester && r.requestedBy !== qState.requester) return false;
     if (qState.type && r.type !== qState.type) return false;
@@ -672,24 +690,16 @@ function renderQueue() {
   ];
 
   let html = '';
-  if (qState.status === 'done') {
-    html = list.map(rowHtml).join('');
-  } else {
-    bands.forEach(b => {
-      const rows = list.filter(r => r.band === b.key && r.status !== 'done');
-      if (!rows.length) return;
-      const posts = rows.reduce((a, r) => a + (r.posts || 1), 0);
-      html += '<div class="band-head"><span class="band-name ' + b.key + '">' + b.label + '</span>' +
-        '<span class="band-meta">' + rows.length + ' request' + (rows.length === 1 ? '' : 's') + ' · ' + posts + ' piece' + (posts === 1 ? '' : 's') + ' of content</span></div>';
-      html += rows.map(rowHtml).join('');
-    });
-    const done = list.filter(r => r.status === 'done');
-    if (done.length && qState.status === 'all') {
-      html += '<div class="band-head"><span class="band-name queue">Done</span><span class="band-meta">' + done.length + '</span></div>';
-      html += done.map(rowHtml).join('');
-    }
-  }
+  bands.forEach(b => {
+    const rows = list.filter(r => r.band === b.key);
+    if (!rows.length) return;
+    const posts = rows.reduce((a, r) => a + (r.posts || 1), 0);
+    html += '<div class="band-head"><span class="band-name ' + b.key + '">' + b.label + '</span>' +
+      '<span class="band-meta">' + rows.length + ' request' + (rows.length === 1 ? '' : 's') + ' · ' + posts + ' piece' + (posts === 1 ? '' : 's') + ' of content</span></div>';
+    html += rows.map(rowHtml).join('');
+  });
   el.innerHTML = html;
+  renderCompleted();
 }
 
 function rowHtml(r) {
@@ -720,7 +730,7 @@ function rowHtml(r) {
   });
   if (r.permalink) links.push('<a href="' + escapeHtml(r.permalink) + '" target="_blank" rel="noopener">Slack ↗</a>');
 
-  const body = r.notes || r.text || '';
+  const body = requestLabel(r, 400);
 
   return '<div class="req' + (r.status === 'done' ? ' done' : '') + '">' +
     '<input type="checkbox" class="req-check"' + (r.status === 'done' ? ' checked' : '') +
@@ -734,7 +744,7 @@ function rowHtml(r) {
       '</div>' +
     '</div>' +
     '<div>' +
-      '<div class="req-title">' + escapeHtml(body).slice(0, 400) + '</div>' +
+      '<div class="req-title">' + escapeHtml(body) + '</div>' +
       '<div class="req-client-meta" style="margin-top:5px">' + chips.join(' ') + '</div>' +
       (links.length ? '<div class="req-links">' + links.join('') + '</div>' : '') +
     '</div>' +
@@ -747,6 +757,19 @@ function rowHtml(r) {
       '</select>' +
     '</div>' +
   '</div>';
+}
+
+// What to call a request on screen. Prefers the requester's own notes,
+// falls back to the message prose, and names the work when the message
+// was nothing but the template fields.
+function requestLabel(r, max) {
+  const raw = (r.notes && r.notes.trim()) || (r.text && r.text.trim()) || '';
+  const cleaned = raw
+    .replace(/^\s*(client|link|links|due date|due|deadline|needed by|priority|additional notes|notes|context)\s*:.*$/gim, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleaned.length >= 12) return cleaned.slice(0, max || 150);
+  return r.type + ' for ' + (r.accountName || 'unmatched client');
 }
 
 function typeColor(t) {
@@ -998,27 +1021,32 @@ async function loadPerformance() {
 }
 
 function renderPerformance() {
-  const perf = CD.performanceSummary(requests, { topN: 40 });
+  const perf = CD.performanceSummary(requests, { topN: 50 });
 
-  const banner = document.getElementById('lineage-banner');
+  const banner = document.getElementById('perf-banner');
   if (!lineageConfigured) {
-    banner.classList.remove('hidden');
+    banner.className = 'banner warn';
     banner.innerHTML = '<div><b>Post performance is not connected.</b> ' + escapeHtml(lineageNote || '') +
       '<br>Everything else on the dashboard works without it.</div>';
   } else if (lineageNote) {
-    banner.classList.remove('hidden');
     banner.className = 'banner info';
     banner.innerHTML = '<div>' + escapeHtml(lineageNote) + '</div>';
   } else {
-    banner.classList.add('hidden');
+    banner.className = 'banner info hidden';
   }
+
+  // Average ICP rate across the posts that report one.
+  const icpRows = perf.top.filter(r => r.performance.icpRate != null);
+  const avgIcp = icpRows.length
+    ? Math.round((icpRows.reduce((a, r) => a + r.performance.icpRate, 0) / icpRows.length) * 10) / 10
+    : null;
 
   document.getElementById('perf-kpis').innerHTML = [
     kpi('Posts measured', perf.measuredPosts, 'published and synced'),
-    kpi('Total engagement', perf.engagement, 'reactions + comments + shares'),
+    kpi('Total engagement', perf.engagement, 'reactions + comments + reposts'),
     kpi('Avg per post', perf.avgEngagement, 'across measured posts'),
-    kpi('Comments', perf.comments, 'the signal worth reading'),
-    kpi('Awaiting data', perf.unmeasuredRequests, perf.unmeasuredRequests ? 'not published or not synced yet' : 'all posts measured')
+    kpi('Avg ICP rate', avgIcp == null ? '—' : avgIcp + '%', avgIcp == null ? 'not returned by Lineage yet' : 'of engagement from ICP'),
+    kpi('Awaiting data', perf.unmeasuredRequests, perf.unmeasuredRequests ? 'not published or not synced' : 'all posts measured')
   ].join('');
 
   set('perf-synced', perf.syncedAt
@@ -1028,20 +1056,23 @@ function renderPerformance() {
   const tbody = document.querySelector('#perf-table tbody');
   tbody.innerHTML = perf.top.length ? perf.top.map(r => {
     const p = r.performance;
+    const link = (r.links || []).find(u => /\/lineage\//.test(u)) || r.permalink;
+    const body = escapeHtml(requestLabel(r, 110));
     const partial = p.measured < p.posts
       ? ' <span class="chip grey" title="' + (p.posts - p.measured) + ' of this request\'s posts have no data yet">' + p.measured + '/' + p.posts + '</span>'
       : '';
     return '<tr>' +
       '<td>' + escapeHtml(r.accountName) + '</td>' +
-      '<td style="font-size:12px;color:var(--ink2)">' + escapeHtml((r.notes || r.text || '').slice(0, 120)) + partial + '</td>' +
+      '<td style="font-size:12px;color:var(--ink2)">' + (link ? '<a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + body + '</a>' : body) + partial + '</td>' +
       '<td><span class="chip ' + typeColor(r.type) + '">' + escapeHtml(r.type) + '</span></td>' +
+      '<td style="font-size:12px;color:var(--ink2)">' + fmtDate(p.postedAt || r.completedAt || r.requestedAt) + '</td>' +
       '<td class="num">' + p.likes + '</td>' +
       '<td class="num">' + p.comments + '</td>' +
-      '<td class="num">' + p.shares + '</td>' +
+      '<td class="num">' + p.reposts + '</td>' +
+      '<td class="num">' + (p.icpRate != null ? p.icpRate + '%' : '<span style="color:var(--ink3)">—</span>') + '</td>' +
       '<td class="num"><b>' + p.engagement + '</b></td>' +
-      '<td>' + fmtDate(r.completedAt || r.requestedAt) + '</td>' +
     '</tr>';
-  }).join('') : '<tr><td colspan="8" class="empty">No measured posts yet.</td></tr>';
+  }).join('') : '<tr><td colspan="9" class="empty">No measured posts yet.</td></tr>';
 
   const top = perf.byAccount.slice(0, 12);
   drawChart('chart-perf', {
@@ -1051,7 +1082,7 @@ function renderPerformance() {
       datasets: [
         { label: 'Reactions', data: top.map(a => a.likes), backgroundColor: '#1D9E75' },
         { label: 'Comments', data: top.map(a => a.comments), backgroundColor: '#378ADD' },
-        { label: 'Shares', data: top.map(a => a.shares), backgroundColor: '#7F77DD' }
+        { label: 'Reposts', data: top.map(a => a.reposts), backgroundColor: '#7F77DD' }
       ]
     },
     options: Object.assign(barOpts('Engagement'), {
@@ -1061,6 +1092,98 @@ function renderPerformance() {
       }
     })
   });
+}
+
+function renderCompleted() {
+  const groups = CD.completedByAccount(requests);
+  const perf = CD.performanceSummary(requests, { topN: 0 });
+  const measuredOnly = document.getElementById('completed-measured-only').checked;
+
+  const banner = document.getElementById('completed-banner');
+  if (!lineageConfigured) {
+    banner.className = 'banner warn';
+    banner.innerHTML = '<div><b>Post performance is not connected.</b> ' + escapeHtml(lineageNote || '') +
+      '<br>Completed work is still listed below; only the LinkedIn numbers are missing.</div>';
+  } else if (lineageNote) {
+    banner.className = 'banner info';
+    banner.innerHTML = '<div>' + escapeHtml(lineageNote) + '</div>';
+  } else {
+    banner.className = 'banner info hidden';
+  }
+
+  document.getElementById('completed-kpis').innerHTML = [
+    kpi('Completed', requests.filter(r => r.status === 'done').length, 'requests finished'),
+    kpi('Reactions', perf.likes, 'across measured posts'),
+    kpi('Comments', perf.comments, 'the signal worth reading'),
+    kpi('Reposts', perf.reposts, 'shared onward'),
+    kpi('Avg engagement', perf.avgEngagement, 'per measured post')
+  ].join('');
+
+  set('completed-synced', perf.syncedAt
+    ? 'Synced ' + new Date(perf.syncedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : 'No LinkedIn data yet');
+
+  const shown = measuredOnly
+    ? groups.map(g => Object.assign({}, g, { items: g.items.filter(i => i.performance) })).filter(g => g.items.length)
+    : groups;
+
+  const el = document.getElementById('completed-list');
+  if (!shown.length) {
+    el.innerHTML = '<div class="empty">' + (measuredOnly
+      ? 'No completed posts have LinkedIn data yet.'
+      : 'Nothing completed yet. Tick a request off and it lands here.') + '</div>';
+    return;
+  }
+
+  el.innerHTML = shown.map(g => {
+    const acct = accounts.find(a => a.id === g.accountId);
+    const meta = [
+      g.count + ' post' + (g.count === 1 ? '' : 's'),
+      acct ? CD.fmtMrr(acct.mrr) + ' MRR' : null,
+      g.measured ? g.engagement + ' engagement' : null,
+      g.icpRate != null ? g.icpRate + '% ICP' : null,
+      g.awaiting ? g.awaiting + ' awaiting data' : null
+    ].filter(Boolean).join(' · ');
+
+    return '<div class="band-head"><span class="band-name queue" style="color:var(--ink)">' + escapeHtml(g.account) + '</span>' +
+      '<span class="band-meta">' + escapeHtml(meta) + '</span>' +
+      '<span class="band-meta" style="margin-left:auto">' + timeAgo(g.lastAt) + '</span></div>' +
+      '<table class="completed-table"><tbody>' + g.items.map(completedRow).join('') + '</tbody></table>';
+  }).join('');
+}
+
+function completedRow(r) {
+  const p = r.performance;
+  const when = (p && p.postedAt) || r.completedAt || r.requestedAt;
+  const body = escapeHtml(requestLabel(r, 150));
+  const link = (r.links || []).find(u => /\/lineage\//.test(u)) || r.permalink;
+
+  const nums = p
+    ? '<td class="num">' + p.likes + '</td><td class="num">' + p.comments + '</td><td class="num">' + p.reposts + '</td>' +
+      '<td class="num">' + (p.icpRate != null ? p.icpRate + '%' : '<span style="color:var(--ink3)">—</span>') + '</td>'
+    : '<td class="num" colspan="4"><span class="chip grey">' +
+      ((r.postRefs || []).length ? 'Awaiting LinkedIn data' : 'No post linked') + '</span></td>';
+
+  return '<tr>' +
+    '<td style="width:44%">' + (link ? '<a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + body + '</a>' : body) + '</td>' +
+    '<td><span class="chip ' + typeColor(r.type) + '">' + escapeHtml(r.type) + '</span></td>' +
+    '<td style="font-size:12px;color:var(--ink2)">' + escapeHtml(r.requestedBy) + '</td>' +
+    '<td style="font-size:12px;color:var(--ink2)">' + fmtDate(when) + '</td>' +
+    nums +
+  '</tr>';
+}
+
+// Recency reads better as "3 days ago" than a date when the whole point
+// of the ordering is how fresh the work is.
+function timeAgo(iso) {
+  if (!iso) return '';
+  const d = CD.daysBetween(new Date(iso), new Date());
+  if (d <= 0) return 'today';
+  if (d === 1) return 'yesterday';
+  if (d < 7) return d + ' days ago';
+  if (d < 14) return 'last week';
+  if (d < 60) return Math.round(d / 7) + ' weeks ago';
+  return Math.round(d / 30) + ' months ago';
 }
 
 // ── COVERAGE ────────────────────────────────────────────────────

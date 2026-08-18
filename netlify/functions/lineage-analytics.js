@@ -114,14 +114,21 @@ exports.handler = async function (event) {
   }
 
   const matched = Object.keys(analytics).length;
+  const withIcp = Object.keys(analytics).filter(k => analytics[k].icpRate != null).length;
+  const notes = [];
+  if (matched < requested) {
+    notes.push((requested - matched) + ' of ' + requested + ' posts have no analytics yet — usually not published, or not synced from LinkedIn.');
+  }
+  if (matched && !withIcp) {
+    notes.push('This endpoint is not returning an ICP rate, so that column is blank. Point LINEAGE_POST_ANALYTICS_URL at the endpoint behind the Lineage Analytics tab to fill it in.');
+  }
   return reply(200, {
     analytics,
     configured: true,
     requested,
     matched,
-    note: matched < requested
-      ? (requested - matched) + ' of ' + requested + ' posts have no analytics yet — usually not published, or not synced from LinkedIn.'
-      : null,
+    icpAvailable: withIcp > 0,
+    note: notes.length ? notes.join(' ') : null,
     ...(debug ? { workingShape, attempts } : {})
   });
 };
@@ -152,16 +159,30 @@ function normalize(data, postId) {
 
   const likes = num('likes', 'reactions_count', 'reaction_count', 'like_count', 'total_reactions');
   const comments = num('comments', 'comment_count', 'total_comments');
-  const shares = num('shares', 'share_count', 'reposts', 'repost_count');
-  if (likes === null && comments === null && shares === null) return null;
+  const reposts = num('shares', 'share_count', 'reposts', 'repost_count');
+  if (likes === null && comments === null && reposts === null) return null;
+
+  // ICP rate — the share of engagement coming from the client's ideal
+  // customer profile, as shown on the Lineage Analytics tab. It is not
+  // returned by the per-post analytics surface this function currently
+  // reaches, so it is read from any of the plausible key names and left
+  // null when absent. Null renders as "—"; it is never estimated, because
+  // a made-up ICP rate would be read as a real result.
+  let icpRate = num('icp_rate', 'icpRate', 'icp_percentage', 'icpPercentage',
+                    'icp_engagement_rate', 'icp_reach_rate', 'icp');
+  // Accept either 0-1 or 0-100 and normalise to a percentage.
+  if (icpRate != null && icpRate > 0 && icpRate <= 1) icpRate = Math.round(icpRate * 1000) / 10;
 
   return {
     postId,
     likes: likes || 0,
     comments: comments || 0,
-    shares: shares || 0,
+    reposts: reposts || 0,
+    icpRate: icpRate == null ? null : icpRate,
     // Per-reaction breakdown when Lineage sends one (like/love/celebrate/…).
     reactions: (a.reactions && typeof a.reactions === 'object' && !Array.isArray(a.reactions)) ? a.reactions : null,
+    postedAt: a.posted_at || a.postedAt || a.published_at || null,
+    postUrl: a.post_url || a.postUrl || a.permalink || null,
     syncedAt: a.synced_at || a.syncedAt || null
     // No impressions, and no engagement rate — see the header.
   };

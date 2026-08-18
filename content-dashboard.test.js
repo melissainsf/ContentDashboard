@@ -501,43 +501,105 @@ eq('two posts in one ask are both captured', CD.lineagePostRefs(
   'b https://app.virio.ai/lineage/minimal/2dcce067-e05e-449f-8625-1e344cbfc675').length, 2);
 
 // Real numbers, from the Timur reintroduction post Millie wrote.
+// icpRate is carried but Lineage's current per-post surface does not
+// return it, so the null case is the one that must behave.
 const ANALYTICS = {
-  '9854f302-5161-44a1-9080-56e14282c1f4': { likes: 93, comments: 6, shares: 2, syncedAt: '2026-08-15T09:57:05Z' },
-  '3ce56c38-0f15-4195-8372-99ea73834374': { likes: 10, comments: 1, shares: 0, syncedAt: '2026-08-15T09:00:00Z' }
+  '9854f302-5161-44a1-9080-56e14282c1f4': { likes: 93, comments: 6, reposts: 2, icpRate: 34.5, postedAt: '2026-07-21T16:00:00Z', syncedAt: '2026-08-15T09:57:05Z' },
+  '3ce56c38-0f15-4195-8372-99ea73834374': { likes: 10, comments: 1, reposts: 0, icpRate: null, postedAt: '2026-07-24T12:00:00Z', syncedAt: '2026-08-15T09:00:00Z' }
 };
 
 const perfReqs = CD.attachPerformance([
-  { id: 'a', accountName: 'HustlePay', postRefs: [{ company: 'hustlepay', postId: '9854f302-5161-44a1-9080-56e14282c1f4' }] },
-  { id: 'b', accountName: 'Minimal', postRefs: [
+  { id: 'a', accountName: 'HustlePay', status: 'done', completedAt: '2026-07-21T09:00:00Z', requestedAt: '2026-07-20T09:00:00Z',
+    postRefs: [{ company: 'hustlepay', postId: '9854f302-5161-44a1-9080-56e14282c1f4' }] },
+  { id: 'b', accountName: 'Minimal', status: 'done', completedAt: '2026-07-24T09:00:00Z', requestedAt: '2026-07-23T09:00:00Z',
+    postRefs: [
       { company: 'minimal', postId: '3ce56c38-0f15-4195-8372-99ea73834374' },
       { company: 'minimal', postId: '2dcce067-e05e-449f-8625-1e344cbfc675' } ] },
-  { id: 'c', accountName: 'Netlify', postRefs: [{ company: 'netlify', postId: 'not-in-the-map' }] },
-  { id: 'd', accountName: 'Axya', postRefs: [] }
+  { id: 'c', accountName: 'Netlify', status: 'done', completedAt: '2026-08-01T09:00:00Z', requestedAt: '2026-07-30T09:00:00Z',
+    postRefs: [{ company: 'netlify', postId: 'not-in-the-map' }] },
+  { id: 'd', accountName: 'Axya', status: 'accepted', requestedAt: '2026-08-17T09:00:00Z', postRefs: [] }
 ], ANALYTICS);
 
 eq('engagement attached to the matching request', perfReqs[0].performance.engagement, 101);
-eq('likes carried through', perfReqs[0].performance.likes, 93);
+eq('reactions carried through', perfReqs[0].performance.likes, 93);
+eq('reposts carried through', perfReqs[0].performance.reposts, 2);
+eq('ICP rate carried through', perfReqs[0].performance.icpRate, 34.5);
+eq('publish time carried through for ordering', perfReqs[0].performance.postedAt, '2026-07-21T16:00:00Z');
 eq('sync time carried through for staleness', perfReqs[0].performance.syncedAt, '2026-08-15T09:57:05Z');
 eq('a request with two posts sums only the measured one', perfReqs[1].performance.engagement, 11);
 eq('...and reports how many of its posts were measured', perfReqs[1].performance.measured, 1);
 eq('...out of how many it produced', perfReqs[1].performance.posts, 2);
+eq('a post with no ICP rate leaves it null rather than zero', perfReqs[1].performance.icpRate, null);
 ok('an unpublished post reports no performance rather than zero engagement', perfReqs[2].performance === null);
 ok('a request with no Lineage post has no performance', perfReqs[3].performance === null);
 ok('impressions are never invented', perfReqs[0].performance.impressions === undefined);
 
+// ICP rate is a percentage, so several posts average rather than sum.
+const twoIcp = CD.attachPerformance([{ id: 'x', postRefs: [{ postId: 'p1' }, { postId: 'p2' }] }],
+  { p1: { likes: 1, comments: 0, reposts: 0, icpRate: 20 }, p2: { likes: 1, comments: 0, reposts: 0, icpRate: 40 } });
+eq('two ICP rates average rather than sum', twoIcp[0].performance.icpRate, 30);
+const oneIcp = CD.attachPerformance([{ id: 'x', postRefs: [{ postId: 'p1' }, { postId: 'p2' }] }],
+  { p1: { likes: 1, comments: 0, reposts: 0, icpRate: 20 }, p2: { likes: 1, comments: 0, reposts: 0, icpRate: null } });
+eq('a post without an ICP rate is left out of the average, not counted as zero', oneIcp[0].performance.icpRate, 20);
+
 const ps = CD.performanceSummary(perfReqs);
 eq('measured posts counted', ps.measuredPosts, 2);
 eq('total engagement', ps.engagement, 112);
+eq('reposts totalled', ps.reposts, 2);
 eq('average is per measured post, not per request', ps.avgEngagement, 56);
 eq('unmeasured requests are surfaced, not hidden', ps.unmeasuredRequests, 1);
 eq('best performer ranked first', ps.top[0].accountName, 'HustlePay');
 eq('per-account rollup ranks by engagement', ps.byAccount[0].account, 'HustlePay');
-eq('per-account post counts are measured posts', ps.byAccount[0].posts, 1);
+eq('per-account reposts rolled up', ps.byAccount[0].reposts, 2);
 eq('newest sync time wins', ps.syncedAt, '2026-08-15T09:57:05Z');
 
 const empty = CD.performanceSummary([]);
 eq('an empty queue averages zero rather than dividing by zero', empty.avgEngagement, 0);
 eq('...and reports nothing measured', empty.measuredPosts, 0);
+
+// ── Completed, by customer and recency ─────────────────────────
+section('Completed, by customer and recency');
+
+const completed = CD.completedByAccount(perfReqs);
+eq('only completed work appears', completed.length, 3);
+ok('the open request is excluded', !completed.some(g => g.account === 'Axya'));
+eq('the most recently finished customer comes first', completed[0].account, 'Netlify');
+eq('...then the next most recent', completed[1].account, 'Minimal');
+eq('...then the oldest', completed[2].account, 'HustlePay');
+
+const hustle = completed.find(g => g.account === 'HustlePay');
+eq('engagement rolled up per customer', hustle.engagement, 101);
+eq('reposts rolled up per customer', hustle.reposts, 2);
+eq('ICP rate rolled up per customer', hustle.icpRate, 34.5);
+eq('post count per customer', hustle.count, 1);
+eq('average engagement per measured post', hustle.avgEngagement, 101);
+
+const netlifyGroup = completed.find(g => g.account === 'Netlify');
+eq('completed work with no data still appears', netlifyGroup.count, 1);
+eq('...and is counted as awaiting data, not as zero engagement', netlifyGroup.awaiting, 1);
+eq('...so its ICP rate stays null', netlifyGroup.icpRate, null);
+eq('...and its average engagement is null, not 0', netlifyGroup.avgEngagement, null);
+
+// Recency uses the post's publish time when there is one, because that is
+// when the work actually landed in front of an audience.
+const ordering = CD.completedByAccount(CD.attachPerformance([
+  { id: 'p', accountName: 'Early ticked, late posted', status: 'done', completedAt: '2026-07-01T09:00:00Z', postRefs: [{ postId: 'z' }] },
+  { id: 'q', accountName: 'Later ticked, no post', status: 'done', completedAt: '2026-07-10T09:00:00Z', postRefs: [] }
+], { z: { likes: 1, comments: 0, reposts: 0, postedAt: '2026-07-20T09:00:00Z' } }));
+eq('publish time beats tick time for ordering', ordering[0].account, 'Early ticked, late posted');
+
+// Several posts for one customer sort newest first inside the group.
+const multi = CD.completedByAccount(CD.attachPerformance([
+  { id: '1', accountName: 'Acme', status: 'done', completedAt: '2026-07-01T09:00:00Z', postRefs: [] },
+  { id: '2', accountName: 'Acme', status: 'done', completedAt: '2026-08-01T09:00:00Z', postRefs: [] },
+  { id: '3', accountName: 'Acme', status: 'done', completedAt: '2026-07-15T09:00:00Z', postRefs: [] }
+], {}));
+eq('one group for the customer', multi.length, 1);
+eq('three posts in it', multi[0].count, 3);
+eq('newest post first', multi[0].items[0].id, '2');
+eq('oldest post last', multi[0].items[2].id, '1');
+
+eq('nothing completed yields no groups', CD.completedByAccount([]).length, 0);
 
 // ── Summary ────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '✓ ' : '✗ ') + passed + ' passed, ' + failed + ' failed');

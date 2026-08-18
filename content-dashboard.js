@@ -902,19 +902,30 @@
     const map = analytics || {};
     return (requests || []).map(r => {
       const refs = r.postRefs || [];
-      let likes = 0, comments = 0, shares = 0, measured = 0, syncedAt = null;
+      let likes = 0, comments = 0, reposts = 0, measured = 0, syncedAt = null;
+      let icpSum = 0, icpCount = 0, postedAt = null;
       refs.forEach(ref => {
         const a = map[ref.postId];
         if (!a) return;
         measured++;
         likes += a.likes || 0;
         comments += a.comments || 0;
-        shares += a.shares || 0;
+        reposts += a.reposts || 0;
+        // ICP rate is a percentage per post, so several posts average
+        // rather than sum. Posts without it are left out of the average
+        // instead of counting as zero.
+        if (a.icpRate != null) { icpSum += a.icpRate; icpCount++; }
         if (a.syncedAt && (!syncedAt || new Date(a.syncedAt) > new Date(syncedAt))) syncedAt = a.syncedAt;
+        if (a.postedAt && (!postedAt || new Date(a.postedAt) > new Date(postedAt))) postedAt = a.postedAt;
       });
       return Object.assign({}, r, {
         performance: measured
-          ? { likes, comments, shares, engagement: likes + comments + shares, measured, posts: refs.length, syncedAt }
+          ? {
+              likes, comments, reposts,
+              engagement: likes + comments + reposts,
+              icpRate: icpCount ? Math.round((icpSum / icpCount) * 10) / 10 : null,
+              measured, posts: refs.length, syncedAt, postedAt
+            }
           : null
       });
     });
@@ -934,12 +945,12 @@
     const byAccount = {};
     rows.forEach(r => {
       const key = r.accountName || 'Unmatched';
-      byAccount[key] = byAccount[key] || { account: key, posts: 0, likes: 0, comments: 0, shares: 0, engagement: 0 };
+      byAccount[key] = byAccount[key] || { account: key, posts: 0, likes: 0, comments: 0, reposts: 0, engagement: 0 };
       const b = byAccount[key];
       b.posts += r.performance.measured;
       b.likes += r.performance.likes;
       b.comments += r.performance.comments;
-      b.shares += r.performance.shares;
+      b.reposts += r.performance.reposts;
       b.engagement += r.performance.engagement;
     });
 
@@ -955,7 +966,7 @@
       measuredRequests: rows.length,
       likes: sum('likes'),
       comments: sum('comments'),
-      shares: sum('shares'),
+      reposts: sum('reposts'),
       engagement,
       avgEngagement: posts ? Math.round((engagement / posts) * 10) / 10 : 0,
       // Unmeasured = asks whose posts are not published (or not synced yet).
@@ -964,6 +975,62 @@
       byAccount: Object.keys(byAccount).map(k => byAccount[k]).sort((a, b) => b.engagement - a.engagement),
       syncedAt
     };
+  }
+
+  /**
+   * Completed work, grouped by customer and ordered by how recent it is —
+   * both the customers and the posts inside each one.
+   *
+   * A completed request with no performance data still appears; it is
+   * work Millie did, and hiding it would make the widget read as though
+   * less was delivered than actually was.
+   */
+  function completedByAccount(requests, opts) {
+    const o = opts || {};
+    const groups = {};
+
+    (requests || []).filter(r => r.status === 'done').forEach(r => {
+      const key = r.accountName || 'Unmatched';
+      groups[key] = groups[key] || {
+        account: key,
+        accountId: r.accountId || null,
+        items: [],
+        likes: 0, comments: 0, reposts: 0, engagement: 0,
+        measured: 0, awaiting: 0,
+        icpSum: 0, icpCount: 0,
+        lastAt: null
+      };
+      const g = groups[key];
+      // Order by when the work actually landed: the post's publish time
+      // if we have it, otherwise when it was ticked off.
+      const at = (r.performance && r.performance.postedAt) || r.completedAt || r.requestedAt;
+      g.items.push(Object.assign({}, r, { completedSortAt: at }));
+      if (!g.lastAt || new Date(at) > new Date(g.lastAt)) g.lastAt = at;
+
+      if (r.performance) {
+        g.likes += r.performance.likes;
+        g.comments += r.performance.comments;
+        g.reposts += r.performance.reposts;
+        g.engagement += r.performance.engagement;
+        g.measured += r.performance.measured;
+        if (r.performance.icpRate != null) { g.icpSum += r.performance.icpRate; g.icpCount++; }
+      } else if ((r.postRefs || []).length) {
+        g.awaiting++;
+      }
+    });
+
+    const list = Object.keys(groups).map(k => {
+      const g = groups[k];
+      g.items.sort((a, b) => new Date(b.completedSortAt) - new Date(a.completedSortAt));
+      g.icpRate = g.icpCount ? Math.round((g.icpSum / g.icpCount) * 10) / 10 : null;
+      g.count = g.items.length;
+      g.avgEngagement = g.measured ? Math.round((g.engagement / g.measured) * 10) / 10 : null;
+      delete g.icpSum; delete g.icpCount;
+      return g;
+    });
+
+    list.sort((a, b) => new Date(b.lastAt) - new Date(a.lastAt));
+    return o.limit ? list.slice(0, o.limit) : list;
   }
 
   // ── Account matching ──────────────────────────────────────────
@@ -1157,6 +1224,7 @@
     prioritise,
     attachPerformance,
     performanceSummary,
+    completedByAccount,
     fmtMrr
   };
 });

@@ -28,7 +28,7 @@ dashboard.
 | --- | --- |
 | **HubSpot** | The client book — MRR, Account Manager, Content Engineer, Content Health Score, CSM Sentiment, contracted posts/month, products |
 | **Slack `#content-support`** | The requests themselves — "Millie will you write an ABM post for my customer X" |
-| **Lineage** | LinkedIn engagement on the posts Millie writes |
+| **Lineage** | Reactions, comments, reposts and ICP rate on the posts Millie writes |
 
 ---
 
@@ -125,18 +125,44 @@ can't be scheduled, only interrupted.
 ## Post performance
 
 A request pasted into Slack carries its Lineage post URL, and the uuid in
-that URL is the id Lineage keys analytics on. So the queue can report how
-the post Millie wrote actually did, without anyone linking anything by
-hand.
+that URL is the id Lineage keys analytics on. So the dashboard can report
+how the post Millie wrote actually did, without anyone linking anything by
+hand — and only for *her* posts, not the client's whole feed.
 
-**Impressions are not shown.** Lineage does not expose impressions or views
-for LinkedIn posts, so there is no denominator for an engagement *rate*
-either. Reactions, comments and shares are real numbers; anything claiming
-reach would be invented.
+Four metrics, matching the Lineage Analytics tab: **reactions, comments,
+reposts, ICP rate.**
+
+It shows up in two places:
+
+- **Completed** — a widget at the bottom of the Queue, grouped by customer
+  and ordered by how recent the work is. This is "what did I finish, and
+  how did it land". Recency uses the post's publish time where there is
+  one, because that is when the work actually reached an audience.
+- **Post Performance** — its own tab: every measured post ranked by
+  engagement, plus engagement by client. This is "what is working".
+
+Completed work with no LinkedIn data still appears in both — it is work
+Millie did, and hiding it would make the record read as though less was
+delivered than actually was. It is marked *awaiting data*, never zero.
+
+### What is not shown, and why
+
+**Impressions.** Lineage does not expose impressions or views for LinkedIn
+posts, so there is no denominator for an engagement *rate* either.
+Reactions, comments and reposts are real numbers; anything claiming reach
+would be invented.
+
+**ICP rate may be blank.** The column and the roll-ups are built and
+tested, but the per-post Lineage API surface reachable at build time did
+not return an ICP rate — it appears on the Lineage Analytics tab in the
+web app. The function reads it from any of the plausible field names and
+leaves it `null` when absent, rendering as `—` rather than a made-up
+percentage. Point `LINEAGE_POST_ANALYTICS_URL` at the endpoint behind that
+Analytics tab and the column fills in. The response says plainly when ICP
+rate is not coming through, so a column of dashes never reads as broken.
 
 Engagement counts sync periodically from LinkedIn and are typically hours
-stale — the tab shows the sync time. Posts that have not published yet are
-counted as "awaiting data", not as zero engagement.
+stale — both views show the sync time.
 
 ---
 
@@ -198,11 +224,11 @@ written anywhere else; HubSpot, Slack and Lineage are read-only.
 | --- | --- |
 | `index.html` | The page |
 | `content-dashboard.js` | Parsing, scoring, capacity and performance maths — pure, no DOM |
-| `content-dashboard.test.js` | 183 tests, fixtures taken from real channel messages and real Lineage numbers |
+| `content-dashboard.test.js` | 210 tests, fixtures taken from real channel messages and real Lineage numbers |
 | `netlify/functions/accounts.js` | The client book from HubSpot |
 | `netlify/functions/content-requests.js` | Reads Slack history + stored state |
 | `netlify/functions/content-request-write.js` | Writes per-request state |
-| `netlify/functions/lineage-analytics.js` | LinkedIn engagement per post |
+| `netlify/functions/lineage-analytics.js` | Reactions, comments, reposts, ICP rate per post |
 
 Run the tests with `npm test` (no dependencies).
 
@@ -210,8 +236,10 @@ Run the tests with `npm test` (no dependencies).
 
 ## Known limits
 
-- The Lineage analytics REST path is unconfirmed — see
-  `LINEAGE_POST_ANALYTICS_URL` above.
+- The Lineage analytics REST path is unconfirmed, and the surface used
+  at build time did not return ICP rate — see `LINEAGE_POST_ANALYTICS_URL`
+  above. Everything for ICP rate is wired and tested; it needs the right
+  endpoint.
 - A prose request naming **two** clients with no links attaches to one of
   them; the other is visible in the text but not counted separately.
 - Thread replies are treated as conversation, not as new requests.
