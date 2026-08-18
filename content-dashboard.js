@@ -42,12 +42,16 @@
     // Priority points. Deliberately additive and small so every number
     // on screen can be explained in one line to whoever is asking why
     // their request is not at the top.
+    // Deadlines outweigh everything else on purpose. A missed date is a
+    // hard failure the requester sees; a big account drifting is a soft
+    // concern. These sit above the combined account signals so an item
+    // due today can never be buried by account attributes alone.
     duePoints: [
-      { maxDays: -1,       points: 40, label: 'Overdue' },
-      { maxDays: 0,        points: 35, label: 'Due today' },
-      { maxDays: 2,        points: 28, label: 'Due in 2 days' },
-      { maxDays: 5,        points: 18, label: 'Due this week' },
-      { maxDays: 10,       points: 10, label: 'Due next week' },
+      { maxDays: -1,       points: 55, label: 'Overdue' },
+      { maxDays: 0,        points: 48, label: 'Due today' },
+      { maxDays: 2,        points: 38, label: 'Due in 2 days' },
+      { maxDays: 5,        points: 24, label: 'Due this week' },
+      { maxDays: 10,       points: 12, label: 'Due next week' },
       { maxDays: Infinity, points: 4,  label: 'Not due yet' }
     ],
     noDuePoints: 8,          // undated asks should not sink out of sight forever
@@ -62,10 +66,27 @@
     ],
     mrrFloorPoints: 4,
 
-    // Account health, as set by the AMs on the CS dashboard. A wobbling
-    // account earns content attention ahead of a comfortable one.
-    healthPoints: { red: 20, yellow: 12, blue: 6, green: 2 },
-    healthUnknownPoints: 6,
+    // Content Health Score (HubSpot, 1-10): "Are we on track with their
+    // content? The goal is to be 30 days ahead." Low means behind, which
+    // is the most direct signal there is that an account needs Millie.
+    contentHealthPoints: [
+      { max: 3,  points: 20, label: 'Badly behind on content' },
+      { max: 5,  points: 14, label: 'Behind on content' },
+      { max: 7,  points: 6,  label: 'Content roughly on track' },
+      { max: 10, points: 2,  label: 'Content well ahead' }
+    ],
+    contentHealthUnknownPoints: 6,
+
+    // CSM Sentiment (HubSpot, 1-10), where 1 is "very high likelihood of
+    // churn". A wobbling account earns content attention ahead of a
+    // comfortable one.
+    churnRiskPoints: [
+      { max: 2,  points: 12, label: 'High churn risk' },
+      { max: 3,  points: 8,  label: 'Churn risk 50/50' },
+      { max: 5,  points: 2,  label: 'Low churn risk' },
+      { max: 10, points: 0,  label: 'Churn risk minimal' }
+    ],
+    churnRiskUnknownPoints: 5,
 
     // Revenue upside — rev share means our money moves with their results.
     revSharePoints: 6,
@@ -81,8 +102,8 @@
     requesterPriorityPoints: { high: 6, medium: 2, low: 0 },
 
     // Band cutoffs for the queue grouping.
-    nowMin: 60,
-    weekMin: 35,
+    nowMin: 75,
+    weekMin: 45,
 
     // Accounts above this share of delivered content are flagged as
     // monopolising Millie (she is a shared resource across the book).
@@ -154,6 +175,24 @@
     extractUrls(text).forEach(u => {
       const m = u.match(/\/lineage\/([a-z0-9][a-z0-9-]*)/i);
       if (m && out.indexOf(m[1].toLowerCase()) === -1) out.push(m[1].toLowerCase());
+    });
+    return out;
+  }
+
+  // A Lineage post URL is /lineage/<company-slug>/<post-uuid>. The uuid is
+  // the same id Lineage's analytics are keyed on, so a request pasted into
+  // Slack carries everything needed to look up how the post performed.
+  const UUID_RE = '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}';
+  function lineagePostRefs(text) {
+    const out = [];
+    const seen = {};
+    extractUrls(text).forEach(u => {
+      const m = u.match(new RegExp('/lineage/([a-z0-9][a-z0-9-]*)/(' + UUID_RE + ')', 'i'));
+      if (!m) return;
+      const postId = m[2].toLowerCase();
+      if (seen[postId]) return;
+      seen[postId] = true;
+      out.push({ company: m[1].toLowerCase(), postId: postId });
     });
     return out;
   }
@@ -482,6 +521,7 @@
         client: clientRaw ? cleanText(clientRaw) : null,
         clientSlug: slugs[0] || null,
         links: extractUrls(block),
+        postRefs: lineagePostRefs(block),
         dueAt: due.at ? due.at.toISOString() : null,
         dueRaw: due.raw || (fields.due || ''),
         asap: due.asap,
@@ -560,7 +600,7 @@
    * ranking is always defensible.
    *
    * @param {object} req      a parsed request
-   * @param {object} account  { mrr, health, products, lastDeliveredAt } or null
+   * @param {object} account  { mrr, contentHealth, churnRisk, products, lastDeliveredAt } or null
    * @param {object} opts     { now: Date, config }
    */
   function scoreRequest(req, account, opts) {
@@ -585,11 +625,25 @@
     score += mp;
     reasons.push({ label: acct.mrr ? fmtMrr(acct.mrr) + ' MRR' : 'MRR unknown', points: mp });
 
-    const hp = acct.health && cfg.healthPoints[acct.health] != null
-      ? cfg.healthPoints[acct.health]
-      : cfg.healthUnknownPoints;
-    score += hp;
-    reasons.push({ label: acct.health ? cap(acct.health) + ' health' : 'Health not set', points: hp });
+    const ch = parseScore10(acct.contentHealth);
+    if (ch === null) {
+      score += cfg.contentHealthUnknownPoints;
+      reasons.push({ label: 'Content health not set', points: cfg.contentHealthUnknownPoints });
+    } else {
+      const band = bandFor(ch, cfg.contentHealthPoints);
+      score += band.points;
+      reasons.push({ label: band.label + ' (' + ch + '/10)', points: band.points });
+    }
+
+    const risk = parseChurnRisk(acct.churnRisk);
+    if (risk === null) {
+      score += cfg.churnRiskUnknownPoints;
+      reasons.push({ label: 'Churn risk not set', points: cfg.churnRiskUnknownPoints });
+    } else {
+      const band = bandFor(risk, cfg.churnRiskPoints);
+      score += band.points;
+      reasons.push({ label: band.label + ' (' + risk + '/10)', points: band.points });
+    }
 
     const products = String(acct.products || '');
     if (/rev\s*share/i.test(products)) {
@@ -623,6 +677,37 @@
   }
 
   const BAND_LABEL = { now: 'Do now', week: 'This week', queue: 'Queue' };
+
+  function bandFor(value, bands) {
+    for (const b of bands) if (value <= b.max) return b;
+    return bands[bands.length - 1];
+  }
+
+  // HubSpot enumeration values arrive as strings. Content Health Score is
+  // a plain "1".."10".
+  function parseScore10(v) {
+    if (v == null || v === '') return null;
+    const n = Number(String(v).trim());
+    return Number.isFinite(n) && n >= 1 && n <= 10 ? n : null;
+  }
+
+  // CSM Sentiment is stored inconsistently in HubSpot: 1-5 are phrases
+  // ("Very high likelihood of churn") whose LABEL is the number, while
+  // 6-10 are stored as the bare numeral. Accept both, and read it on the
+  // same 1-10 scale where lower means more risk.
+  const CHURN_PHRASES = [
+    [/very high likelihood/i, 1],
+    [/somewhat high likelihood/i, 2],
+    [/50\s*\/\s*50/i, 3],
+    [/low likelihood/i, 4],
+    [/virtually zero/i, 5]
+  ];
+  function parseChurnRisk(v) {
+    if (v == null || v === '') return null;
+    const s = String(v).trim();
+    for (const [re, n] of CHURN_PHRASES) if (re.test(s)) return n;
+    return parseScore10(s);
+  }
 
   function cap(s) { return String(s || '').charAt(0).toUpperCase() + String(s || '').slice(1); }
 
@@ -730,7 +815,10 @@
         id: a.id,
         name: a.name,
         mrr: a.mrr || 0,
-        health: a.health || null,
+        contentHealth: a.contentHealth == null ? null : a.contentHealth,
+        churnRisk: a.churnRisk == null ? null : a.churnRisk,
+        postsPerMonth: a.postsPerMonth || null,
+        contentManager: a.contentManager || null,
         products: a.products || '',
         requests: 0,
         posts: 0,
@@ -793,6 +881,88 @@
       byRequester: Object.keys(byRequester)
         .map(k => byRequester[k])
         .sort((a, b) => b.rush - a.rush || b.total - a.total)
+    };
+  }
+
+  // ── Performance (Lineage) ─────────────────────────────────────
+
+  /**
+   * Attach LinkedIn engagement to each request from a Lineage analytics
+   * map keyed by post id.
+   *
+   * A request's numbers are the sum across the posts it produced, and
+   * `measured` counts how many of those posts actually came back with
+   * data — a request whose posts have not published yet reports zero
+   * measured rather than zero engagement, which are different things.
+   *
+   * Impressions are deliberately absent: Lineage does not expose them for
+   * LinkedIn posts, and an estimated reach number would be a fabrication.
+   */
+  function attachPerformance(requests, analytics) {
+    const map = analytics || {};
+    return (requests || []).map(r => {
+      const refs = r.postRefs || [];
+      let likes = 0, comments = 0, shares = 0, measured = 0, syncedAt = null;
+      refs.forEach(ref => {
+        const a = map[ref.postId];
+        if (!a) return;
+        measured++;
+        likes += a.likes || 0;
+        comments += a.comments || 0;
+        shares += a.shares || 0;
+        if (a.syncedAt && (!syncedAt || new Date(a.syncedAt) > new Date(syncedAt))) syncedAt = a.syncedAt;
+      });
+      return Object.assign({}, r, {
+        performance: measured
+          ? { likes, comments, shares, engagement: likes + comments + shares, measured, posts: refs.length, syncedAt }
+          : null
+      });
+    });
+  }
+
+  /**
+   * Roll performance up across the queue. Only measured posts count
+   * toward the averages, so unpublished drafts cannot drag them down.
+   */
+  function performanceSummary(requests, opts) {
+    const o = opts || {};
+    const rows = (requests || []).filter(r => r.performance && r.performance.measured);
+    const sum = k => rows.reduce((a, r) => a + r.performance[k], 0);
+    const posts = rows.reduce((a, r) => a + r.performance.measured, 0);
+    const engagement = sum('engagement');
+
+    const byAccount = {};
+    rows.forEach(r => {
+      const key = r.accountName || 'Unmatched';
+      byAccount[key] = byAccount[key] || { account: key, posts: 0, likes: 0, comments: 0, shares: 0, engagement: 0 };
+      const b = byAccount[key];
+      b.posts += r.performance.measured;
+      b.likes += r.performance.likes;
+      b.comments += r.performance.comments;
+      b.shares += r.performance.shares;
+      b.engagement += r.performance.engagement;
+    });
+
+    let syncedAt = null;
+    rows.forEach(r => {
+      if (r.performance.syncedAt && (!syncedAt || new Date(r.performance.syncedAt) > new Date(syncedAt))) {
+        syncedAt = r.performance.syncedAt;
+      }
+    });
+
+    return {
+      measuredPosts: posts,
+      measuredRequests: rows.length,
+      likes: sum('likes'),
+      comments: sum('comments'),
+      shares: sum('shares'),
+      engagement,
+      avgEngagement: posts ? Math.round((engagement / posts) * 10) / 10 : 0,
+      // Unmeasured = asks whose posts are not published (or not synced yet).
+      unmeasuredRequests: (requests || []).filter(r => (r.postRefs || []).length && !r.performance).length,
+      top: rows.slice().sort((a, b) => b.performance.engagement - a.performance.engagement).slice(0, o.topN || 10),
+      byAccount: Object.keys(byAccount).map(k => byAccount[k]).sort((a, b) => b.engagement - a.engagement),
+      syncedAt
     };
   }
 
@@ -862,6 +1032,7 @@
           client: entry.client || null,
           clientSlug: null,
           links: entry.links || [],
+          postRefs: [],
           dueAt: null,
           dueRaw: '',
           asap: false,
@@ -954,6 +1125,7 @@
     cleanText,
     extractUrls,
     lineageSlugs,
+    lineagePostRefs,
     slugToName,
     // parsing
     fieldOf,
@@ -974,6 +1146,8 @@
     leadTime,
     leadTimeSummary,
     scoreRequest,
+    parseScore10,
+    parseChurnRisk,
     weeklyVolume,
     capacitySummary,
     coverageByAccount,
@@ -981,6 +1155,8 @@
     matchAccount,
     buildRequests,
     prioritise,
+    attachPerformance,
+    performanceSummary,
     fmtMrr
   };
 });

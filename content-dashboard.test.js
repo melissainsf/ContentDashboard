@@ -306,20 +306,20 @@ const base = { requestedAt: '2026-08-17T09:00:00Z', type: 'Post', posts: 1 };
 // Melissa's own worked example from the sync: a bigger, wobbling account
 // outranks a smaller, healthy one on the same deadline.
 const big = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-25T09:00:00Z' }),
-  { mrr: 20000, health: 'yellow' }, { now: NOW });
+  { mrr: 20000, contentHealth: '4', churnRisk: '2' }, { now: NOW });
 const small = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-25T09:00:00Z' }),
-  { mrr: 6000, health: 'green' }, { now: NOW });
-ok('20k/yellow outranks 6k/green on the same deadline', big.score > small.score);
+  { mrr: 6000, contentHealth: '9', churnRisk: '5' }, { now: NOW });
+ok('a big account behind on content outranks a small healthy one', big.score > small.score);
 
 // ...but a deadline still beats account size.
 const dueToday = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-18T09:00:00Z' }),
-  { mrr: 6000, health: 'green' }, { now: NOW });
+  { mrr: 6000, contentHealth: '9', churnRisk: '5' }, { now: NOW });
 const dueLater = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-09-30T09:00:00Z' }),
-  { mrr: 20000, health: 'yellow' }, { now: NOW });
+  { mrr: 20000, contentHealth: '4', churnRisk: '2' }, { now: NOW });
 ok('a deadline today beats a big account with no deadline pressure', dueToday.score > dueLater.score);
 
 const overdue = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-14T09:00:00Z' }),
-  { mrr: 6000, health: 'green' }, { now: NOW });
+  { mrr: 6000, contentHealth: '9', churnRisk: '5' }, { now: NOW });
 ok('overdue work lands in the "do now" band', overdue.band === 'now');
 
 ok('every score carries its reasons', big.reasons.length >= 3);
@@ -327,28 +327,63 @@ ok('reason points sum to the score',
   Math.round(big.reasons.reduce((a, r) => a + r.points, 0)) === big.score);
 
 const revShare = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-25T09:00:00Z' }),
-  { mrr: 6000, health: 'green', products: 'EGC, Rev Share' }, { now: NOW });
+  { mrr: 6000, contentHealth: '9', churnRisk: '5', products: 'EGC, Rev Share' }, { now: NOW });
 ok('rev share accounts score above the same account without it', revShare.score > small.score);
 
 const starved = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-25T09:00:00Z' }),
-  { mrr: 6000, health: 'green', lastDeliveredAt: '2026-06-01T09:00:00Z' }, { now: NOW });
+  { mrr: 6000, contentHealth: '9', churnRisk: '5', lastDeliveredAt: '2026-06-01T09:00:00Z' }, { now: NOW });
 const wellFed = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-25T09:00:00Z' }),
-  { mrr: 6000, health: 'green', lastDeliveredAt: '2026-08-14T09:00:00Z' }, { now: NOW });
+  { mrr: 6000, contentHealth: '9', churnRisk: '5', lastDeliveredAt: '2026-08-14T09:00:00Z' }, { now: NOW });
 ok('an account with nothing recent gets a nudge up the queue', starved.score > wellFed.score);
 ok('an account served last week gets no starvation bonus',
   !wellFed.reasons.some(r => /No content in/.test(r.label)));
-ok('an account nobody has ever asked about counts as starved too',
-  small.reasons.some(r => /Nothing delivered yet/.test(r.label)));
+
+// ── Content health and churn risk ──────────────────────────────
+section('Content health and churn risk');
+
+// HubSpot stores Content Health Score as a plain "1".."10".
+eq('content health parses', CD.parseScore10('4'), 4);
+eq('a blank content health is unknown, not zero', CD.parseScore10(''), null);
+eq('an out-of-range value is rejected', CD.parseScore10('11'), null);
+
+// CSM Sentiment is stored as phrases for 1-5 and bare numerals for 6-10.
+eq('"Very high likelihood of churn" reads as 1', CD.parseChurnRisk('Very high likelihood of churn'), 1);
+eq('"Somewhat high likelihood of churn" reads as 2', CD.parseChurnRisk('Somewhat high likelihood of churn'), 2);
+eq('"50/50 - likelihood of churn" reads as 3', CD.parseChurnRisk('50/50 - likelihood of churn'), 3);
+eq('"Low likelihood of churn" reads as 4', CD.parseChurnRisk('Low likelihood of churn'), 4);
+eq('"Virtually zero likelihood of churn" reads as 5', CD.parseChurnRisk('Virtually zero likelihood of churn'), 5);
+eq('a bare numeral still parses', CD.parseChurnRisk('8'), 8);
+eq('an unset sentiment is unknown', CD.parseChurnRisk(null), null);
+
+// Being behind on content is the most direct reason to prioritise an ask.
+const behind = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-25T09:00:00Z' }),
+  { mrr: 6000, contentHealth: '2', churnRisk: '5' }, { now: NOW });
+const ahead = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-25T09:00:00Z' }),
+  { mrr: 6000, contentHealth: '10', churnRisk: '5' }, { now: NOW });
+ok('an account behind on content outranks one well ahead', behind.score > ahead.score);
+ok('the reason names the content health score', behind.reasons.some(r => /behind on content \(2\/10\)/i.test(r.label)));
+
+const churny = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-25T09:00:00Z' }),
+  { mrr: 6000, contentHealth: '9', churnRisk: 'Very high likelihood of churn' }, { now: NOW });
+ok('a churn-risk account outranks a comfortable one', churny.score > small.score);
+ok('the reason names the churn risk', churny.reasons.some(r => /high churn risk/i.test(r.label)));
+
+// Unknown must not silently score as best or worst.
+const unknown = CD.scoreRequest(Object.assign({}, base, { dueAt: '2026-08-25T09:00:00Z' }), { mrr: 6000 }, { now: NOW });
+ok('unknown content health scores between behind and ahead', unknown.score < behind.score && unknown.score > ahead.score);
+ok('unknown signals are labelled as unset',
+  unknown.reasons.some(r => /Content health not set/.test(r.label)) &&
+  unknown.reasons.some(r => /Churn risk not set/.test(r.label)));
 
 // ── Account matching ───────────────────────────────────────────
 section('Account matching');
 
 const ACCOUNTS = [
-  { id: '1', name: 'Netlify', mrr: 20000, health: 'green' },
-  { id: '2', name: 'Hume AI', mrr: 12000, health: 'yellow' },
-  { id: '3', name: 'Axya', mrr: 6000, health: 'green' },
-  { id: '4', name: 'HustlePay', mrr: 8000, health: 'red' },
-  { id: '5', name: 'Highwire', mrr: 9000, health: 'yellow' }
+  { id: '1', name: 'Netlify', mrr: 20000, contentHealth: '8', churnRisk: 'Virtually zero likelihood of churn' },
+  { id: '2', name: 'Hume AI', mrr: 12000, contentHealth: '5', churnRisk: '50/50 - likelihood of churn' },
+  { id: '3', name: 'Axya', mrr: 6000, contentHealth: '9', churnRisk: 'Low likelihood of churn' },
+  { id: '4', name: 'HustlePay', mrr: 8000, contentHealth: '2', churnRisk: 'Very high likelihood of churn' },
+  { id: '5', name: 'Highwire', mrr: 9000, contentHealth: '4', churnRisk: 'Somewhat high likelihood of churn' }
 ];
 
 eq('exact match', CD.matchAccount({ client: 'Netlify' }, ACCOUNTS).id, '1');
@@ -406,6 +441,8 @@ eq('unmatched requests are counted, not silently dropped', cov.unmatched, 1);
 const axyaRow = cov.rows.find(r => r.id === '3');
 eq('open requests tracked separately from delivered', axyaRow.openRequests, 1);
 eq('rows sort by MRR, biggest first', cov.rows[0].id, '1');
+eq('coverage carries content health through for the table', cov.rows.find(r => r.id === '4').contentHealth, '2');
+eq('coverage carries churn risk through', cov.rows.find(r => r.id === '4').churnRisk, 'Very high likelihood of churn');
 
 // ── End-to-end ─────────────────────────────────────────────────
 section('End to end');
@@ -445,6 +482,62 @@ const withManual = CD.buildRequests(MESSAGES, {
 }, ACCOUNTS, OPTS);
 eq('a manually added request joins the queue', withManual.length, 3);
 eq('manual requests are matched to accounts too', withManual.find(r => r.id === 'manual-1').accountName, 'Highwire');
+
+// ── Lineage performance ────────────────────────────────────────
+section('Lineage performance');
+
+// The uuid in a pasted Lineage URL is the analytics key — that join is
+// what lets the queue report how the post Millie wrote actually did.
+const refs = CD.lineagePostRefs('<https://app.virio.ai/lineage/hustlepay/9854f302-5161-44a1-9080-56e14282c1f4|x>');
+eq('one post ref found', refs.length, 1);
+eq('company slug captured', refs[0].company, 'hustlepay');
+eq('post uuid captured', refs[0].postId, '9854f302-5161-44a1-9080-56e14282c1f4');
+eq('a lineage link without a post id yields no ref',
+  CD.lineagePostRefs('<https://app.virio.ai/lineage/minimal|x>').length, 0);
+eq('a non-lineage link yields no ref',
+  CD.lineagePostRefs('https://docs.google.com/document/d/1Er1').length, 0);
+eq('two posts in one ask are both captured', CD.lineagePostRefs(
+  'a https://app.virio.ai/lineage/minimal/3ce56c38-0f15-4195-8372-99ea73834374 ' +
+  'b https://app.virio.ai/lineage/minimal/2dcce067-e05e-449f-8625-1e344cbfc675').length, 2);
+
+// Real numbers, from the Timur reintroduction post Millie wrote.
+const ANALYTICS = {
+  '9854f302-5161-44a1-9080-56e14282c1f4': { likes: 93, comments: 6, shares: 2, syncedAt: '2026-08-15T09:57:05Z' },
+  '3ce56c38-0f15-4195-8372-99ea73834374': { likes: 10, comments: 1, shares: 0, syncedAt: '2026-08-15T09:00:00Z' }
+};
+
+const perfReqs = CD.attachPerformance([
+  { id: 'a', accountName: 'HustlePay', postRefs: [{ company: 'hustlepay', postId: '9854f302-5161-44a1-9080-56e14282c1f4' }] },
+  { id: 'b', accountName: 'Minimal', postRefs: [
+      { company: 'minimal', postId: '3ce56c38-0f15-4195-8372-99ea73834374' },
+      { company: 'minimal', postId: '2dcce067-e05e-449f-8625-1e344cbfc675' } ] },
+  { id: 'c', accountName: 'Netlify', postRefs: [{ company: 'netlify', postId: 'not-in-the-map' }] },
+  { id: 'd', accountName: 'Axya', postRefs: [] }
+], ANALYTICS);
+
+eq('engagement attached to the matching request', perfReqs[0].performance.engagement, 101);
+eq('likes carried through', perfReqs[0].performance.likes, 93);
+eq('sync time carried through for staleness', perfReqs[0].performance.syncedAt, '2026-08-15T09:57:05Z');
+eq('a request with two posts sums only the measured one', perfReqs[1].performance.engagement, 11);
+eq('...and reports how many of its posts were measured', perfReqs[1].performance.measured, 1);
+eq('...out of how many it produced', perfReqs[1].performance.posts, 2);
+ok('an unpublished post reports no performance rather than zero engagement', perfReqs[2].performance === null);
+ok('a request with no Lineage post has no performance', perfReqs[3].performance === null);
+ok('impressions are never invented', perfReqs[0].performance.impressions === undefined);
+
+const ps = CD.performanceSummary(perfReqs);
+eq('measured posts counted', ps.measuredPosts, 2);
+eq('total engagement', ps.engagement, 112);
+eq('average is per measured post, not per request', ps.avgEngagement, 56);
+eq('unmeasured requests are surfaced, not hidden', ps.unmeasuredRequests, 1);
+eq('best performer ranked first', ps.top[0].accountName, 'HustlePay');
+eq('per-account rollup ranks by engagement', ps.byAccount[0].account, 'HustlePay');
+eq('per-account post counts are measured posts', ps.byAccount[0].posts, 1);
+eq('newest sync time wins', ps.syncedAt, '2026-08-15T09:57:05Z');
+
+const empty = CD.performanceSummary([]);
+eq('an empty queue averages zero rather than dividing by zero', empty.avgEngagement, 0);
+eq('...and reports nothing measured', empty.measuredPosts, 0);
 
 // ── Summary ────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '✓ ' : '✗ ') + passed + ' passed, ' + failed + ' failed');

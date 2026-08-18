@@ -1,26 +1,11 @@
 # Millie's Content Dashboard — routes.
 #
-# The dashboard is the site root (index.html); /content is kept as an
-# alias so existing links and muscle memory keep working.
+# Two data sources, both owned by this site: HubSpot for the client book,
+# Slack for the request feed. Nothing else.
 
 [[redirects]]
-  from = "/content"
-  to = "/index.html"
-  status = 200
-
-[[redirects]]
-  from = "/api/hubspot"
-  to = "/.netlify/functions/hubspot"
-  status = 200
-
-[[redirects]]
-  from = "/api/account-health"
-  to = "/.netlify/functions/account-health"
-  status = 200
-
-[[redirects]]
-  from = "/api/pr-products"
-  to = "/.netlify/functions/pr-products"
+  from = "/api/accounts"
+  to = "/.netlify/functions/accounts"
   status = 200
 
 [[redirects]]
@@ -31,4 +16,9 @@
 [[redirects]]
   from = "/api/content-request-write"
   to = "/.netlify/functions/content-request-write"
+  status = 200
+
+[[redirects]]
+  from = "/api/lineage-analytics"
+  to = "/.netlify/functions/lineage-analytics"
   status = 200

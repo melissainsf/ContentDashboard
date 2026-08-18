@@ -1,11 +1,11 @@
 # Millie's Content Dashboard
 
-A content request queue, capacity tracker and coverage view for the content
-role. Deploys to Netlify from this repo.
+A content request queue, capacity tracker, coverage view and performance
+report for the content role. Deploys to Netlify from this repo.
 
 Google sign-in, `@virio.ai` accounts only.
 
-It exists to answer three questions that came out of the 2026-08-13
+It exists to answer four questions that came out of the 2026-08-13
 Melissa ↔ Millie sync:
 
 1. **What should I work on next?** — every request from `#content-support`,
@@ -14,14 +14,29 @@ Melissa ↔ Millie sync:
    what actually gets delivered, rather than guessed.
 3. **Is every client getting some love?** — who is starved, who is
    monopolising the shared resource.
+4. **Is the content any good?** — LinkedIn engagement on the posts that
+   came out of this queue.
+
+---
+
+## Data sources
+
+Three, and only three. This dashboard does not depend on any other Virio
+dashboard.
+
+| Source | What it provides |
+| --- | --- |
+| **HubSpot** | The client book — MRR, Account Manager, Content Engineer, Content Health Score, CSM Sentiment, contracted posts/month, products |
+| **Slack `#content-support`** | The requests themselves — "Millie will you write an ABM post for my customer X" |
+| **Lineage** | LinkedIn engagement on the posts Millie writes |
 
 ---
 
 ## How the queue is built
 
-Requests come from the `#content-support` Slack channel. Nothing about the
-team's workflow has to change — the dashboard reads the template Millie
-already asked everyone to use:
+Requests come from `#content-support`. Nothing about the team's workflow
+has to change — the dashboard reads the template Millie already asked
+everyone to use:
 
 ```
 :bust_in_silhouette: Client:
@@ -63,24 +78,31 @@ to the reactions.
 
 ## How ranking works
 
-Each open request gets a score out of ~100. Hovering the score shows every
-component, so the order is always explainable to whoever is asking why
-their request is not at the top.
+Each open request gets a score. Hovering it shows every component, so the
+order is always explainable to whoever is asking why their request is not
+at the top.
 
-| Signal | Points | Why |
+| Signal | Points | Source |
 | --- | --- | --- |
-| Deadline | 4–40 | Overdue > today > this week > later |
-| Account MRR | 4–25 | Banded, from HubSpot |
-| Account health | 2–20 | Red and yellow outrank green |
-| Rev share / launch | +6 / +4 | Our revenue moves with theirs |
-| Nothing delivered in 30 days | +8 | Keeps quiet accounts from vanishing |
-| Requester marked it high | +6 | A nudge, not a queue-jump |
+| Deadline | 4–55 | Parsed from the request |
+| Account MRR | 4–25 | HubSpot `mrr` + `expansion_mrr` |
+| Content health | 2–20 | HubSpot `content_health_score` |
+| Churn risk | 0–12 | HubSpot `csm_sentiment` |
+| Rev share / launch | +6 / +4 | HubSpot `product` |
+| Nothing delivered in 30 days | +8 | This queue's own history |
+| Requester marked it high | +6 | The Slack message |
 
-Bands: **Do now** ≥ 60, **This week** ≥ 35, **Queue** below that.
+Bands: **Do now** ≥ 75, **This week** ≥ 45, **Queue** below that.
 
-This encodes the rule Melissa gave on the call: a $20k account sitting in
-yellow outranks a $6k account in green, but a deadline today still beats
-account size.
+**Deadlines outweigh everything else on purpose.** A missed date is a hard
+failure the requester sees; a big account drifting is a soft concern. The
+deadline weights sit above the combined account signals so an item due
+today can never be buried by account attributes alone.
+
+Content Health Score is HubSpot's own *"Are we on track with their content?
+The goal is to be 30 days ahead"* — the most direct signal there is that an
+account needs Millie. CSM Sentiment is stored inconsistently in HubSpot
+(phrases for 1–5, bare numerals for 6–10); both are handled.
 
 All weights live in `DEFAULT_CONFIG` at the top of `content-dashboard.js`.
 Change them there; nothing downstream hard-codes a number.
@@ -100,6 +122,24 @@ can't be scheduled, only interrupted.
 
 ---
 
+## Post performance
+
+A request pasted into Slack carries its Lineage post URL, and the uuid in
+that URL is the id Lineage keys analytics on. So the queue can report how
+the post Millie wrote actually did, without anyone linking anything by
+hand.
+
+**Impressions are not shown.** Lineage does not expose impressions or views
+for LinkedIn posts, so there is no denominator for an engagement *rate*
+either. Reactions, comments and shares are real numbers; anything claiming
+reach would be invented.
+
+Engagement counts sync periodically from LinkedIn and are typically hours
+stale — the tab shows the sync time. Posts that have not published yet are
+counted as "awaiting data", not as zero engagement.
+
+---
+
 ## Setup
 
 ### Slack app
@@ -114,44 +154,41 @@ The channel is private, so a Slack app must be created and invited.
 
 ### Netlify environment variables
 
-| Variable | Required | What happens without it |
+| Variable | Required | Without it |
 | --- | --- | --- |
 | `HUBSPOT_TOKEN` | **yes** | No accounts load — the page fails loud |
 | `SLACK_BOT_TOKEN` | **yes** | No live requests; manual entry still works |
-| `CS_DASHBOARD_URL` | strongly recommended | Account health is not counted in ranking |
+| `LINEAGE_API_KEY` | for performance | Post Performance tab says it is not connected |
+| `LINEAGE_POST_ANALYTICS_URL` | see below | Falls back to guessing the path |
 | `SLACK_CONTENT_CHANNEL_ID` | no | Defaults to `C0BFY7Y3MK7` (`#content-support`) |
 | `SLACK_CONTENT_OWNER_IDS` | no | Defaults to `U0A2VGT6NRL` (Millie) |
 | `SLACK_CONTENT_DAYS` | no | Defaults to `120` |
 | `SLACK_WORKSPACE` | no | Defaults to `virio-workspace` |
+| `LINEAGE_DEBUG=1` | no | Adds the attempted URLs to the response |
 
-`HUBSPOT_TOKEN` is the same token the CS dashboard uses. It needs company
-read, plus deal + deal-schema read for the product tags.
+`HUBSPOT_TOKEN` needs `crm.objects.companies.read`.
 
-`CS_DASHBOARD_URL` is the base URL of the CS dashboard site, e.g.
-`https://viriodash.netlify.app` — no trailing slash.
+**`LINEAGE_POST_ANALYTICS_URL` needs confirming with whoever owns the
+Lineage API.** The per-post analytics data shape is known and handled, but
+the exact REST path was never confirmed, so the function tries a few
+plausible shapes and reports failure rather than pretending. Set it to the
+real path as a template and the guessing stops:
+
+```
+https://app.virio.ai/api/lineage/{company}/posts/{postId}/analytics
+```
+
+`{company}` and `{postId}` are substituted per post.
 
 Until `SLACK_BOT_TOKEN` is set the page loads and works, shows a banner
 saying the feed is not connected, and requests can still be added by hand.
 It never shows an empty queue as though there were no work.
 
-### Why `CS_DASHBOARD_URL` matters
-
-Account health (red / yellow / green / blue) is set by the AMs on the CS
-dashboard and is one of the ranking signals — a wobbling account earns
-content attention ahead of a comfortable one.
-
-Netlify Blobs stores are **per-site**, so this site cannot see the CS
-dashboard's health store. `CS_DASHBOARD_URL` makes this site proxy the CS
-dashboard's read-only `/api/account-health` endpoint, keeping one source of
-truth. Set it and health colours appear; leave it unset and the dashboard
-says plainly, in a banner, that health is not being counted — it does not
-silently rank every account as "unknown".
-
 ### Storage
 
-This site's own state — ticks, client corrections, manually added
-requests — lives in this site's Netlify Blobs store `content-requests`.
-Nothing else is written anywhere.
+Dashboard state — ticks, client corrections, manually added requests —
+lives in this site's Netlify Blobs store `content-requests`. Nothing is
+written anywhere else; HubSpot, Slack and Lineage are read-only.
 
 ---
 
@@ -160,13 +197,12 @@ Nothing else is written anywhere.
 | File | What it is |
 | --- | --- |
 | `index.html` | The page |
-| `content-dashboard.js` | Parsing, scoring and capacity maths — pure, no DOM |
-| `content-dashboard.test.js` | 141 tests, fixtures taken from real channel messages |
+| `content-dashboard.js` | Parsing, scoring, capacity and performance maths — pure, no DOM |
+| `content-dashboard.test.js` | 183 tests, fixtures taken from real channel messages and real Lineage numbers |
+| `netlify/functions/accounts.js` | The client book from HubSpot |
 | `netlify/functions/content-requests.js` | Reads Slack history + stored state |
 | `netlify/functions/content-request-write.js` | Writes per-request state |
-| `netlify/functions/hubspot.js` | Accounts, MRR, products (copied from the CS dashboard) |
-| `netlify/functions/account-health.js` | Proxies health from the CS dashboard |
-| `netlify/functions/pr-products.js` | Product tags from closed-won deals |
+| `netlify/functions/lineage-analytics.js` | LinkedIn engagement per post |
 
 Run the tests with `npm test` (no dependencies).
 
@@ -174,12 +210,15 @@ Run the tests with `npm test` (no dependencies).
 
 ## Known limits
 
+- The Lineage analytics REST path is unconfirmed — see
+  `LINEAGE_POST_ANALYTICS_URL` above.
 - A prose request naming **two** clients with no links attaches to one of
   them; the other is visible in the text but not counted separately.
 - Thread replies are treated as conversation, not as new requests.
 - Post counts are conservative: an ask with no number counts as one piece.
 - "Delivered" means marked done, so the volume charts are only as accurate
   as the ticking. Reactions cover the backfill.
-- `hubspot.js` and `pr-products.js` are copies of the CS dashboard's
-  versions. They are stateless HubSpot reads, so copying is safe, but a
-  change to the HubSpot schema needs applying in both repos.
+- **Millie 30d** on the coverage tab counts only requests through this
+  queue. It is not the account's full content cadence — most of that is
+  delivered by their own Content Engineer. `Contracted /mo` is shown
+  beside it as context, not as a target for this queue.

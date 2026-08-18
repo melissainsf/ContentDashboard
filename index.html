@@ -133,8 +133,6 @@ main{padding:24px 32px 60px;max-width:1560px;margin:0 auto}
 .chip.purple{background:var(--purple-light);color:var(--purple)}
 .chip.grey{background:var(--surface2);color:var(--ink2)}
 .chip.yellow{background:var(--yellow-light);color:var(--yellow)}
-.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex-shrink:0}
-.dot.red{background:#D44}.dot.yellow{background:#E0A800}.dot.green{background:#1D9E75}.dot.blue{background:#378ADD}.dot.none{background:#CFCCC5}
 .mrr{font-variant-numeric:tabular-nums;font-size:12px;color:var(--ink2)}
 /* TABLES */
 table{width:100%;border-collapse:collapse;font-size:13px}
@@ -212,12 +210,12 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
   <button class="tab-btn active" onclick="switchTab(event,'queue')">Queue</button>
   <button class="tab-btn" onclick="switchTab(event,'capacity')">Capacity</button>
   <button class="tab-btn" onclick="switchTab(event,'coverage')">Account Coverage</button>
+  <button class="tab-btn" onclick="switchTab(event,'performance')">Post Performance</button>
 </nav>
 
 <main>
   <div id="stale-banner" class="banner error hidden"></div>
   <div id="slack-banner" class="banner warn hidden"></div>
-  <div id="health-banner" class="banner info hidden"></div>
 
   <!-- ── QUEUE ─────────────────────────────────────────────── -->
   <div id="tab-queue" class="tab-content active">
@@ -247,7 +245,7 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
       </div>
       <div id="queue-list" class="section-body flush"></div>
       <div class="legend">
-        <span><b>Ranking:</b> deadline + MRR + account health + revenue upside + time since last post</span>
+        <span><b>Ranking:</b> deadline + MRR + content health + churn risk + revenue upside + time since last post</span>
         <span>Hover a score to see exactly why it ranked there</span>
       </div>
     </div>
@@ -319,16 +317,56 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
       <div class="section-body flush">
         <table id="coverage-table">
           <thead><tr>
-            <th>Client</th><th>Health</th><th class="num">MRR</th><th>Products</th>
-            <th class="num">Posts (30d)</th><th class="num">Share</th><th class="num">Open</th>
+            <th>Client</th><th class="num">MRR</th><th>Content health</th><th>Churn risk</th>
+            <th>Products</th><th class="num">Contracted /mo</th><th>Content engineer</th>
+            <th class="num">Millie 30d</th><th class="num">Share</th><th class="num">Open</th>
             <th>Last delivered</th><th>Flag</th>
           </tr></thead>
           <tbody></tbody>
         </table>
       </div>
       <div class="legend">
-        <span><span class="chip coral">Starved</span> nothing delivered in the last 30 days</span>
-        <span><span class="chip amber">Monopolising</span> taking 30%+ of recent output</span>
+        <span><span class="chip coral">Starved</span> no Millie support in the last 30 days</span>
+        <span><span class="chip amber">Monopolising</span> taking 30%+ of her recent output</span>
+        <span><b>Millie 30d</b> counts only requests through this queue, not the account's full content cadence</span>
+        <span><b>Contracted /mo</b> is what the client pays for, delivered mostly by their content engineer</span>
+      </div>
+    </div>
+  </div>
+  <!-- ── PERFORMANCE ───────────────────────────────────────── -->
+  <div id="tab-performance" class="tab-content">
+    <div id="lineage-banner" class="banner warn hidden"></div>
+    <div class="kpis" id="perf-kpis"></div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title">How Millie's posts performed</div>
+          <div class="section-sub">LinkedIn engagement from Lineage, for the posts that came out of this queue. <b>Impressions are not available for LinkedIn posts</b>, so reach is not shown and no engagement rate is calculated.</div>
+        </div>
+        <span class="chip grey" id="perf-synced">—</span>
+      </div>
+      <div class="section-body flush">
+        <table id="perf-table">
+          <thead><tr>
+            <th>Client</th><th>What was asked for</th><th>Type</th>
+            <th class="num">Reactions</th><th class="num">Comments</th><th class="num">Shares</th>
+            <th class="num">Total</th><th>Delivered</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title">Engagement by client</div>
+          <div class="section-sub">Which accounts Millie's work is landing for.</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="chart-box"><canvas id="chart-perf"></canvas></div>
       </div>
     </div>
   </div>
@@ -378,6 +416,9 @@ let overrides = {};       // dashboard-owned state, keyed by request id
 let ownerIds = [];
 let requests = [];        // parsed + scored
 let charts = {};
+let analytics = {};      // Lineage engagement, keyed by post id
+let lineageNote = null;
+let lineageConfigured = false;
 let lastGoodRefresh = null;
 
 const qState = { search: '', client: '', requester: '', type: '', status: 'open' };
@@ -465,7 +506,26 @@ function relDue(iso) {
   if (d <= 5) return { txt: 'In ' + d + 'd', cls: 'amber' };
   return { txt: 'In ' + d + 'd', cls: 'grey' };
 }
-function healthDot(h) { return '<span class="dot ' + (h || 'none') + '" title="' + (h || 'not set') + '"></span>'; }
+// Content Health Score (1-10). Low means behind on content, which is the
+// state that most needs Millie — so low is the loud colour.
+function contentHealthChip(v) {
+  const n = CD.parseScore10(v);
+  if (n === null) return '<span class="chip grey" title="Content Health Score not set in HubSpot">Content —</span>';
+  const cls = n <= 3 ? 'red' : n <= 5 ? 'coral' : n <= 7 ? 'amber' : 'teal';
+  const why = n <= 3 ? 'Badly behind on content' : n <= 5 ? 'Behind on content'
+            : n <= 7 ? 'Content roughly on track' : 'Content well ahead';
+  return '<span class="chip ' + cls + '" title="' + why + ' (HubSpot Content Health Score)">Content ' + n + '/10</span>';
+}
+
+// CSM Sentiment (1-10), 1 = very high likelihood of churn.
+function churnChip(v) {
+  const n = CD.parseChurnRisk(v);
+  if (n === null) return '';
+  if (n > 5) return '';                       // comfortable — not worth the pixels
+  const cls = n <= 2 ? 'red' : n <= 3 ? 'amber' : 'grey';
+  const why = n <= 2 ? 'High likelihood of churn' : n <= 3 ? '50/50 likelihood of churn' : 'Low likelihood of churn';
+  return '<span class="chip ' + cls + '" title="' + why + ' (HubSpot CSM Sentiment)">Churn risk ' + n + '/10</span>';
+}
 
 function markStale(reason) {
   const el = document.getElementById('stale-banner');
@@ -484,6 +544,7 @@ function switchTab(e, name) {
   e.currentTarget.classList.add('active');
   if (name === 'capacity') renderCapacity();
   if (name === 'coverage') renderCoverage();
+  if (name === 'performance') renderPerformance();
 }
 
 // ── LOAD ────────────────────────────────────────────────────────
@@ -491,50 +552,20 @@ async function loadAll() {
   const btn = document.getElementById('refresh-btn');
   btn.disabled = true;
   try {
-    const [hsRes, healthRes, prodRes, reqRes] = await Promise.all([
-      fetch('/api/hubspot', { method: 'POST' }),
-      fetch('/api/account-health').catch(() => null),
-      fetch('/api/pr-products').catch(() => null),
+    const [accRes, reqRes] = await Promise.all([
+      fetch('/api/accounts'),
       fetch('/api/content-requests')
     ]);
 
-    if (!hsRes.ok) {
-      const e = await hsRes.json().catch(() => ({}));
-      throw new Error(e.error || ('HubSpot ' + hsRes.status));
+    if (!accRes.ok) {
+      const e = await accRes.json().catch(() => ({}));
+      throw new Error(e.error || ('Accounts ' + accRes.status));
     }
     if (!reqRes.ok) throw new Error('Content requests ' + reqRes.status);
 
-    const hsData = await hsRes.json();
-    const healthData = healthRes && healthRes.ok ? await healthRes.json() : {};
-    const healthMap = healthData.map || {};
-    const productMap = prodRes && prodRes.ok ? (await prodRes.json()).map || {} : {};
+    const accData = await accRes.json();
     const reqData = await reqRes.json();
-
-    accounts = (hsData.results || [])
-      .filter(r => {
-        const p = r.properties || {};
-        const ls = p.lifecyclestage || '';
-        // Live customers only. A churned account cannot be given "some
-        // love" and would pad the coverage table with dead rows.
-        return ls === 'customer' && ls !== CHURNED_STAGE
-          && p.pilot_status !== 'Exited During Pilot' && p.pilot_status !== 'Churned Post Conversion'
-          && p.domain !== 'virio.ai' && p.name !== 'Virio';
-      })
-      .map(r => {
-        const p = r.properties || {};
-        const pm = productMap[r.id];
-        return {
-          id: r.id,
-          name: p.name || p.domain || r.id,
-          mrr: (parseFloat(p.mrr) || 0) + (parseFloat(p.expansion_mrr) || 0),
-          health: healthMap[r.id] || null,
-          products: [p.product, p.upsold_products, pm && pm.product].filter(Boolean).join(', '),
-          am: p.csm || null,
-          contentManager: p.content_manager || null,
-          postsPerMonth: p.posts_per_month || null,
-          journey: p.customer_journey || null
-        };
-      });
+    accounts = accData.accounts || [];
 
     messages = reqData.messages || [];
     overrides = reqData.overrides || {};
@@ -550,16 +581,8 @@ async function loadAll() {
         '<code>#content-support</code> yet.</div>';
     }
 
-    const hb = document.getElementById('health-banner');
-    if (healthData.note) {
-      hb.classList.remove('hidden');
-      hb.innerHTML = '<div><b>Account health is not being counted.</b> ' + escapeHtml(healthData.note) +
-        '<br>Everything still ranks by deadline, MRR and recency — health simply scores as unknown for every account.</div>';
-    } else {
-      hb.classList.add('hidden');
-    }
-
     rebuild();
+    await loadPerformance();
     lastGoodRefresh = new Date();
     clearStale();
     set('last-updated', 'Refreshed ' + lastGoodRefresh.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
@@ -576,7 +599,7 @@ async function loadAll() {
 // every state write, so the screen never drifts from the store.
 function rebuild() {
   const built = CD.buildRequests(messages, overrides, accounts, { ownerIds });
-  requests = CD.prioritise(built, accounts, {});
+  requests = CD.attachPerformance(CD.prioritise(built, accounts, {}), analytics);
   populateFilters();
   renderQueue();
   const active = document.querySelector('.tab-content.active');
@@ -640,7 +663,7 @@ function renderQueue() {
 
   const open = requests.filter(r => r.status !== 'done');
   const overdue = open.filter(r => r.dueAt && daysFromNow(r.dueAt) < 0).length;
-  set('queue-sub', open.length + ' open · ' + overdue + ' overdue · ranked by deadline, account value and health');
+  set('queue-sub', open.length + ' open · ' + overdue + ' overdue · ranked by deadline, account value, content health and churn risk');
 
   const bands = [
     { key: 'now', label: 'Do now' },
@@ -681,7 +704,15 @@ function rowHtml(r) {
   if (lead.rush) chips.push('<span class="chip red" title="Less than the agreed 3 working days of notice">Rush · ' + lead.days + 'd notice</span>');
   if (r.status === 'blocked') chips.push('<span class="chip amber">Needs a brief</span>');
   if (!r.accountId) chips.push('<span class="chip amber" title="No HubSpot account matched — set the client to rank it properly">Unmatched</span>');
-  if (acct && acct.health) chips.push('<span class="chip grey">' + healthDot(acct.health) + ' ' + acct.health + '</span>');
+  if (r.performance) {
+    chips.push('<span class="chip teal" title="LinkedIn engagement from Lineage">' +
+      r.performance.likes + ' reactions · ' + r.performance.comments + ' comments</span>');
+  }
+  if (acct) {
+    chips.push(contentHealthChip(acct.contentHealth));
+    const cr = churnChip(acct.churnRisk);
+    if (cr) chips.push(cr);
+  }
 
   const links = (r.links || []).slice(0, 3).map((u, i) => {
     const label = /\/lineage\//.test(u) ? 'Lineage post' : /docs\.google|drive\.google/.test(u) ? 'Google doc' : /linkedin\.com/.test(u) ? 'LinkedIn' : 'Link ' + (i + 1);
@@ -933,6 +964,105 @@ function drawChart(id, cfg) {
   charts[id] = new Chart(el.getContext('2d'), cfg);
 }
 
+// ── PERFORMANCE ─────────────────────────────────────────────────
+// Fetched after the queue is built, because the post ids come out of
+// parsing the Slack requests.
+async function loadPerformance() {
+  const refs = [];
+  const seen = {};
+  requests.forEach(r => (r.postRefs || []).forEach(ref => {
+    if (seen[ref.postId]) return;
+    seen[ref.postId] = true;
+    refs.push(ref);
+  }));
+  if (!refs.length) { analytics = {}; lineageConfigured = true; lineageNote = null; return; }
+
+  try {
+    const res = await fetch('/api/lineage-analytics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ posts: refs })
+    });
+    if (!res.ok) throw new Error('Lineage ' + res.status);
+    const data = await res.json();
+    analytics = data.analytics || {};
+    lineageConfigured = !!data.configured;
+    lineageNote = data.note || null;
+  } catch (e) {
+    // Performance is an add-on; the queue does not depend on it.
+    analytics = {};
+    lineageConfigured = false;
+    lineageNote = e.message;
+  }
+  rebuild();
+}
+
+function renderPerformance() {
+  const perf = CD.performanceSummary(requests, { topN: 40 });
+
+  const banner = document.getElementById('lineage-banner');
+  if (!lineageConfigured) {
+    banner.classList.remove('hidden');
+    banner.innerHTML = '<div><b>Post performance is not connected.</b> ' + escapeHtml(lineageNote || '') +
+      '<br>Everything else on the dashboard works without it.</div>';
+  } else if (lineageNote) {
+    banner.classList.remove('hidden');
+    banner.className = 'banner info';
+    banner.innerHTML = '<div>' + escapeHtml(lineageNote) + '</div>';
+  } else {
+    banner.classList.add('hidden');
+  }
+
+  document.getElementById('perf-kpis').innerHTML = [
+    kpi('Posts measured', perf.measuredPosts, 'published and synced'),
+    kpi('Total engagement', perf.engagement, 'reactions + comments + shares'),
+    kpi('Avg per post', perf.avgEngagement, 'across measured posts'),
+    kpi('Comments', perf.comments, 'the signal worth reading'),
+    kpi('Awaiting data', perf.unmeasuredRequests, perf.unmeasuredRequests ? 'not published or not synced yet' : 'all posts measured')
+  ].join('');
+
+  set('perf-synced', perf.syncedAt
+    ? 'Synced from LinkedIn ' + new Date(perf.syncedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : 'Not synced yet');
+
+  const tbody = document.querySelector('#perf-table tbody');
+  tbody.innerHTML = perf.top.length ? perf.top.map(r => {
+    const p = r.performance;
+    const partial = p.measured < p.posts
+      ? ' <span class="chip grey" title="' + (p.posts - p.measured) + ' of this request\'s posts have no data yet">' + p.measured + '/' + p.posts + '</span>'
+      : '';
+    return '<tr>' +
+      '<td>' + escapeHtml(r.accountName) + '</td>' +
+      '<td style="font-size:12px;color:var(--ink2)">' + escapeHtml((r.notes || r.text || '').slice(0, 120)) + partial + '</td>' +
+      '<td><span class="chip ' + typeColor(r.type) + '">' + escapeHtml(r.type) + '</span></td>' +
+      '<td class="num">' + p.likes + '</td>' +
+      '<td class="num">' + p.comments + '</td>' +
+      '<td class="num">' + p.shares + '</td>' +
+      '<td class="num"><b>' + p.engagement + '</b></td>' +
+      '<td>' + fmtDate(r.completedAt || r.requestedAt) + '</td>' +
+    '</tr>';
+  }).join('') : '<tr><td colspan="8" class="empty">No measured posts yet.</td></tr>';
+
+  const top = perf.byAccount.slice(0, 12);
+  drawChart('chart-perf', {
+    type: 'bar',
+    data: {
+      labels: top.map(a => a.account),
+      datasets: [
+        { label: 'Reactions', data: top.map(a => a.likes), backgroundColor: '#1D9E75' },
+        { label: 'Comments', data: top.map(a => a.comments), backgroundColor: '#378ADD' },
+        { label: 'Shares', data: top.map(a => a.shares), backgroundColor: '#7F77DD' }
+      ]
+    },
+    options: Object.assign(barOpts('Engagement'), {
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { font: { family: 'DM Sans', size: 11 } } },
+        y: { stacked: true, beginAtZero: true, ticks: { precision: 0, font: { family: 'DM Sans', size: 11 } }, grid: { color: 'rgba(26,25,22,0.06)' } }
+      }
+    })
+  });
+}
+
 // ── COVERAGE ────────────────────────────────────────────────────
 function renderCoverage() {
   const cov = CD.coverageByAccount(requests, accounts, {});
@@ -954,18 +1084,23 @@ function renderCoverage() {
     const flags = [];
     if (r.monopolising) flags.push('<span class="chip amber">Monopolising</span>');
     if (r.starved) flags.push('<span class="chip coral">Starved</span>');
+    const ppm = r.postsPerMonth ? String(r.postsPerMonth).replace(/\s*posts?\s*\/.*$/i, '') : null;
+    const ce = r.contentManager || '—';
     return '<tr' + (r.starved || r.monopolising ? ' class="flagged"' : '') + '>' +
       '<td>' + escapeHtml(r.name) + '</td>' +
-      '<td>' + healthDot(r.health) + ' <span style="font-size:12px;color:var(--ink2)">' + escapeHtml(r.health || 'not set') + '</span></td>' +
       '<td class="num">' + CD.fmtMrr(r.mrr) + '</td>' +
+      '<td>' + contentHealthChip(r.contentHealth) + '</td>' +
+      '<td>' + (churnChip(r.churnRisk) || '<span style="font-size:12px;color:var(--ink3)">—</span>') + '</td>' +
       '<td style="font-size:12px;color:var(--ink2)">' + escapeHtml(r.products || '—') + '</td>' +
+      '<td class="num">' + (ppm || '—') + '</td>' +
+      '<td style="font-size:12px;color:var(--ink2)">' + escapeHtml(ce) + (ce === 'Millie' ? ' <span class="chip purple">owns</span>' : '') + '</td>' +
       '<td class="num">' + r.recentPosts + '</td>' +
       '<td class="num">' + (r.share ? Math.round(r.share * 100) + '%' : '—') + '</td>' +
       '<td class="num">' + r.openRequests + '</td>' +
       '<td>' + fmtDate(r.lastDeliveredAt) + '</td>' +
       '<td>' + (flags.join(' ') || '') + '</td>' +
     '</tr>';
-  }).join('') : '<tr><td colspan="9" class="empty">Nothing to show.</td></tr>';
+  }).join('') : '<tr><td colspan="12" class="empty">Nothing to show.</td></tr>';
 }
 
 // ── BOOT ────────────────────────────────────────────────────────
