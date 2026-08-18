@@ -1,0 +1,990 @@
+<!DOCTYPE html><!-- v1.0 -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Virio — Millie's Content Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#F5F3EE;--surface:#FFFFFF;--surface2:#EFEDE8;
+  --ink:#1A1916;--ink2:#5C5A55;--ink3:#9B9890;
+  --teal:#0F6E56;--teal-light:#E1F5EE;--teal-mid:#1D9E75;
+  --coral:#993C1D;--coral-light:#FAECE7;--coral-mid:#D85A30;
+  --blue:#185FA5;--blue-light:#E6F1FB;--blue-mid:#378ADD;
+  --amber:#854F0B;--amber-light:#FAEEDA;
+  --purple:#3C3489;--purple-light:#EEEDFE;
+  --red:#A32D2D;--red-light:#FCEBEB;
+  --yellow:#7A5F00;--yellow-light:#FFF8E7;
+  --green:#1D9E75;
+  --border:rgba(26,25,22,0.10);--border-strong:rgba(26,25,22,0.18);
+  --shadow:0 1px 3px rgba(26,25,22,0.06),0 4px 12px rgba(26,25,22,0.04);
+  --header-bg:#1A1916;--header-ink:#F5F3EE;
+  --radius:10px;--radius-sm:6px
+}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;font-size:14px;line-height:1.6}
+/* AUTH */
+#auth-screen{position:fixed;inset:0;z-index:10000;background:var(--header-bg);display:flex;align-items:center;justify-content:center}
+#auth-screen.hidden{display:none}
+.auth-card{background:#242320;border:1px solid rgba(245,243,238,0.1);border-radius:14px;padding:48px 40px;max-width:400px;width:90%;text-align:center}
+.auth-logo{font-family:'Syne',sans-serif;font-size:28px;font-weight:700;color:#F5F3EE;letter-spacing:-0.02em;margin-bottom:6px}
+.auth-subtitle{font-size:13px;color:rgba(245,243,238,0.4);margin-bottom:36px;letter-spacing:0.04em;text-transform:uppercase}
+.auth-btn{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;padding:12px 20px;background:#fff;color:#1A1916;border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:opacity 0.15s}
+.auth-btn:hover{opacity:0.9}
+.auth-btn:disabled{opacity:0.5;cursor:default}
+.auth-btn svg{width:18px;height:18px;flex-shrink:0}
+.auth-error{margin-top:16px;font-size:12px;color:#F09595;min-height:18px}
+.auth-note{margin-top:20px;font-size:11px;color:rgba(245,243,238,0.25)}
+/* HEADER */
+header{background:var(--header-bg);color:var(--header-ink);padding:18px 32px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.header-left{display:flex;align-items:baseline;gap:14px}
+.logo{font-family:'Syne',sans-serif;font-size:18px;font-weight:700;letter-spacing:-0.02em}
+.header-title{font-family:'Syne',sans-serif;font-size:13px;font-weight:400;color:rgba(245,243,238,0.45);letter-spacing:0.07em;text-transform:uppercase}
+.header-right{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+#refresh-btn{background:rgba(245,243,238,0.1);border:1px solid rgba(245,243,238,0.18);color:var(--header-ink);padding:7px 16px;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:13px;cursor:pointer;transition:background 0.15s}
+#refresh-btn:hover{background:rgba(245,243,238,0.2)}
+#refresh-btn:disabled{opacity:0.4;cursor:default}
+#last-updated{font-size:12px;color:rgba(245,243,238,0.38)}
+.signout-btn{background:rgba(245,243,238,0.08);border:1px solid rgba(245,243,238,0.15);color:rgba(245,243,238,0.5);padding:6px 12px;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:12px;cursor:pointer;transition:all 0.15s}
+.signout-btn:hover{background:rgba(245,243,238,0.15);color:var(--header-ink)}
+.header-link{font-size:12px;color:rgba(245,243,238,0.45);text-decoration:none;border-bottom:1px solid rgba(245,243,238,0.2)}
+.header-link:hover{color:var(--header-ink)}
+/* TABS */
+.tab-nav{display:flex;gap:2px;padding:0 32px;background:var(--header-bg);border-top:1px solid rgba(245,243,238,0.08)}
+.tab-btn{font-family:'Syne',sans-serif;font-size:12px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;padding:10px 18px;border:none;background:transparent;color:rgba(245,243,238,0.4);cursor:pointer;border-bottom:2px solid transparent;transition:color 0.15s,border-color 0.15s}
+.tab-btn:hover{color:rgba(245,243,238,0.7)}
+.tab-btn.active{color:var(--header-ink);border-bottom-color:var(--teal-mid)}
+.tab-content{display:none}
+.tab-content.active{display:block}
+main{padding:24px 32px 60px;max-width:1560px;margin:0 auto}
+/* BANNERS */
+.banner{border-radius:var(--radius);padding:12px 16px;margin-bottom:18px;font-size:13px;display:flex;align-items:flex-start;gap:10px}
+.banner.warn{background:var(--amber-light);border:1px solid rgba(133,79,11,0.25);color:var(--amber)}
+.banner.error{background:var(--red-light);border:1px solid rgba(163,45,45,0.25);color:var(--red)}
+.banner.info{background:var(--blue-light);border:1px solid rgba(24,95,165,0.2);color:var(--blue)}
+.banner.hidden{display:none}
+.banner b{font-weight:600}
+.banner code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:rgba(26,25,22,0.06);padding:1px 5px;border-radius:4px}
+/* KPI STRIP */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:22px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow)}
+.kpi-label{font-size:11px;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink3);margin-bottom:4px}
+.kpi-val{font-family:'Syne',sans-serif;font-size:26px;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.kpi-sub{font-size:12px;color:var(--ink2);margin-top:2px}
+.kpi.alert .kpi-val{color:var(--coral)}
+.kpi.good .kpi-val{color:var(--teal)}
+/* SECTION */
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:22px;overflow:hidden}
+.section-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.section-title{font-family:'Syne',sans-serif;font-size:14px;font-weight:600;letter-spacing:0.02em}
+.section-sub{font-size:12px;color:var(--ink2);margin-top:2px;font-weight:400;font-family:'DM Sans',sans-serif;letter-spacing:0}
+.section-body{padding:18px}
+.section-body.flush{padding:0}
+/* TOOLBAR */
+.toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.toolbar input[type=text],.toolbar select{font-family:'DM Sans',sans-serif;font-size:13px;padding:7px 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink)}
+.toolbar input[type=text]{min-width:230px}
+.toolbar-spacer{flex:1}
+.seg{display:inline-flex;border:1px solid var(--border-strong);border-radius:var(--radius-sm);overflow:hidden;background:var(--surface)}
+.seg-btn{font-family:'DM Sans',sans-serif;font-size:12px;padding:6px 12px;border:none;background:transparent;color:var(--ink2);cursor:pointer}
+.seg-btn.active{background:var(--ink);color:var(--bg)}
+.btn{font-family:'DM Sans',sans-serif;font-size:13px;padding:7px 14px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink);cursor:pointer}
+.btn:hover{background:var(--surface2)}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn.primary:hover{opacity:0.88}
+/* QUEUE */
+.band-head{display:flex;align-items:baseline;gap:10px;padding:14px 18px 8px;border-top:1px solid var(--border)}
+.band-head:first-child{border-top:none}
+.band-name{font-family:'Syne',sans-serif;font-size:13px;font-weight:600;letter-spacing:0.03em;text-transform:uppercase}
+.band-name.now{color:var(--coral)}
+.band-name.week{color:var(--amber)}
+.band-name.queue{color:var(--ink3)}
+.band-meta{font-size:12px;color:var(--ink3)}
+.req{display:grid;grid-template-columns:26px 46px minmax(150px,1.1fr) minmax(220px,2.4fr) 108px 96px 116px;gap:12px;align-items:start;padding:12px 18px;border-top:1px solid var(--border)}
+.req:hover{background:var(--surface2)}
+.req.done{opacity:0.52}
+.req.done .req-title{text-decoration:line-through}
+.req-check{width:17px;height:17px;margin-top:2px;cursor:pointer;accent-color:var(--teal-mid)}
+.req-score{font-family:'Syne',sans-serif;font-weight:700;font-size:16px;font-variant-numeric:tabular-nums;text-align:center;cursor:help;border-radius:var(--radius-sm);padding:2px 0;background:var(--surface2)}
+.req-score.now{background:var(--coral-light);color:var(--coral)}
+.req-score.week{background:var(--amber-light);color:var(--amber)}
+.req-client{font-weight:500;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.req-client-meta{font-size:12px;color:var(--ink3);margin-top:2px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.req-title{font-size:13px;line-height:1.5;color:var(--ink)}
+.req-notes{font-size:12px;color:var(--ink2);margin-top:4px;line-height:1.5}
+.req-links{margin-top:6px;display:flex;gap:10px;flex-wrap:wrap}
+.req-links a{font-size:11px;color:var(--blue);text-decoration:none;border-bottom:1px solid rgba(24,95,165,0.25)}
+.req-links a:hover{border-bottom-color:var(--blue)}
+.req-when{font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums}
+.req-when b{display:block;font-weight:500;color:var(--ink)}
+.req-status{font-family:'DM Sans',sans-serif;font-size:12px;padding:5px 7px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink);width:100%}
+.empty{padding:40px 18px;text-align:center;color:var(--ink3);font-size:13px}
+/* CHIPS */
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;padding:2px 8px;border-radius:99px;white-space:nowrap;line-height:1.7}
+.chip.teal{background:var(--teal-light);color:var(--teal)}
+.chip.blue{background:var(--blue-light);color:var(--blue)}
+.chip.amber{background:var(--amber-light);color:var(--amber)}
+.chip.coral{background:var(--coral-light);color:var(--coral)}
+.chip.red{background:var(--red-light);color:var(--red)}
+.chip.purple{background:var(--purple-light);color:var(--purple)}
+.chip.grey{background:var(--surface2);color:var(--ink2)}
+.chip.yellow{background:var(--yellow-light);color:var(--yellow)}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex-shrink:0}
+.dot.red{background:#D44}.dot.yellow{background:#E0A800}.dot.green{background:#1D9E75}.dot.blue{background:#378ADD}.dot.none{background:#CFCCC5}
+.mrr{font-variant-numeric:tabular-nums;font-size:12px;color:var(--ink2)}
+/* TABLES */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-family:'Syne',sans-serif;font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--ink3);padding:10px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
+td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tbody tr:hover{background:var(--surface2)}
+tbody tr.flagged td{background:var(--coral-light)}
+tbody tr.flagged:hover td{background:#F7E2DA}
+/* CHARTS */
+.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:18px}
+.chart-box{position:relative;height:260px}
+.chart-note{font-size:12px;color:var(--ink2);margin-top:10px;line-height:1.55}
+/* TOOLTIP */
+#tip{position:fixed;z-index:9999;background:#242320;color:#F5F3EE;border-radius:8px;padding:10px 12px;font-size:12px;pointer-events:none;opacity:0;transition:opacity 0.12s;max-width:290px;box-shadow:0 8px 24px rgba(0,0,0,0.25)}
+#tip.visible{opacity:1}
+.tip-title{font-family:'Syne',sans-serif;font-weight:600;margin-bottom:6px;font-size:12px}
+.tip-row{display:flex;justify-content:space-between;gap:14px;padding:1px 0;color:rgba(245,243,238,0.75)}
+.tip-val{font-variant-numeric:tabular-nums;color:#F5F3EE}
+.tip-divider{height:1px;background:rgba(245,243,238,0.18);margin:6px 0}
+/* MODAL */
+.modal-back{position:fixed;inset:0;background:rgba(26,25,22,0.45);z-index:9000;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-back.open{display:flex}
+.modal{background:var(--surface);border-radius:12px;width:100%;max-width:480px;box-shadow:0 20px 50px rgba(0,0,0,0.25)}
+.modal h3{font-family:'Syne',sans-serif;font-size:16px;padding:18px 20px;border-bottom:1px solid var(--border)}
+.modal-body{padding:18px 20px;display:grid;gap:12px}
+.modal-body label{font-size:12px;color:var(--ink2);display:grid;gap:5px}
+.modal-body input,.modal-body select,.modal-body textarea{font-family:'DM Sans',sans-serif;font-size:13px;padding:8px 10px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink);width:100%}
+.modal-body textarea{min-height:76px;resize:vertical}
+.modal-foot{padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px}
+footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink2);padding:12px 18px;border-top:1px solid var(--border);background:var(--surface2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+@media (max-width:1100px){
+  .req{grid-template-columns:24px 42px 1fr;row-gap:6px}
+  .req-when,.req-status-cell{grid-column:3}
+}
+</style>
+</head>
+<body>
+
+<div id="auth-screen">
+  <div class="auth-card">
+    <div class="auth-logo">Virio</div>
+    <div class="auth-subtitle">Content Dashboard</div>
+    <button class="auth-btn" id="google-signin-btn" onclick="signInWithGoogle()">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+      </svg>
+      Sign in with Google
+    </button>
+    <div class="auth-error" id="auth-error"></div>
+    <div class="auth-note">Access restricted to @virio.ai accounts</div>
+  </div>
+</div>
+
+<div id="tip"><div class="tip-title" id="tip-title"></div><div id="tip-body"></div></div>
+
+<header>
+  <div class="header-left">
+    <span class="logo">Virio</span>
+    <span class="header-title">Millie's Content Dashboard</span>
+  </div>
+  <div class="header-right">
+    <span id="last-updated"></span>
+    <button id="refresh-btn" onclick="loadAll()">Refresh</button>
+    <button class="signout-btn" id="signout-btn" onclick="signOut()">Sign out</button>
+  </div>
+</header>
+
+<nav class="tab-nav">
+  <button class="tab-btn active" onclick="switchTab(event,'queue')">Queue</button>
+  <button class="tab-btn" onclick="switchTab(event,'capacity')">Capacity</button>
+  <button class="tab-btn" onclick="switchTab(event,'coverage')">Account Coverage</button>
+</nav>
+
+<main>
+  <div id="stale-banner" class="banner error hidden"></div>
+  <div id="slack-banner" class="banner warn hidden"></div>
+  <div id="health-banner" class="banner info hidden"></div>
+
+  <!-- ── QUEUE ─────────────────────────────────────────────── -->
+  <div id="tab-queue" class="tab-content active">
+    <div class="kpis" id="queue-kpis"></div>
+
+    <div class="toolbar">
+      <input type="text" id="q-search" placeholder="Search client, requester, text…" oninput="qState.search=this.value;renderQueue()">
+      <select id="q-client" onchange="qState.client=this.value;renderQueue()"><option value="">All clients</option></select>
+      <select id="q-requester" onchange="qState.requester=this.value;renderQueue()"><option value="">All requesters</option></select>
+      <select id="q-type" onchange="qState.type=this.value;renderQueue()"><option value="">All types</option></select>
+      <div class="seg" id="q-status-seg">
+        <button class="seg-btn active" data-status="open" onclick="qSetStatus('open')">Open</button>
+        <button class="seg-btn" data-status="done" onclick="qSetStatus('done')">Done</button>
+        <button class="seg-btn" data-status="all" onclick="qSetStatus('all')">All</button>
+      </div>
+      <div class="toolbar-spacer"></div>
+      <button class="btn" onclick="openAddModal()">+ Add request</button>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title">Content queue</div>
+          <div class="section-sub" id="queue-sub">—</div>
+        </div>
+        <span class="chip grey" id="queue-count">—</span>
+      </div>
+      <div id="queue-list" class="section-body flush"></div>
+      <div class="legend">
+        <span><b>Ranking:</b> deadline + MRR + account health + revenue upside + time since last post</span>
+        <span>Hover a score to see exactly why it ranked there</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── CAPACITY ──────────────────────────────────────────── -->
+  <div id="tab-capacity" class="tab-content">
+    <div class="kpis" id="cap-kpis"></div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title">Requests in vs content delivered</div>
+          <div class="section-sub">Measured per week, so "what is a reasonable number?" is answered with data rather than a guess.</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="chart-grid">
+          <div>
+            <div class="chart-box"><canvas id="chart-volume"></canvas></div>
+            <div class="chart-note" id="volume-note"></div>
+          </div>
+          <div>
+            <div class="chart-box"><canvas id="chart-type"></canvas></div>
+            <div class="chart-note">What kind of work the queue is actually made of. ABM was agreed as the primary focus.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title">Notice period</div>
+          <div class="section-sub">The agreed floor is <b>3 working days</b>. Anything below that is a rush and squeezes quality.</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <div class="chart-grid">
+          <div>
+            <div class="chart-box"><canvas id="chart-lead"></canvas></div>
+            <div class="chart-note" id="lead-note"></div>
+          </div>
+          <div>
+            <table id="requester-table">
+              <thead><tr><th>Requester</th><th class="num">Requests</th><th class="num">Rush</th><th class="num">Rush %</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── COVERAGE ──────────────────────────────────────────── -->
+  <div id="tab-coverage" class="tab-content">
+    <div class="kpis" id="cov-kpis"></div>
+
+    <div class="section">
+      <div class="section-head">
+        <div>
+          <div class="section-title">Who is getting the content</div>
+          <div class="section-sub">Every client on the book, biggest first — including the ones nobody has asked about.</div>
+        </div>
+        <label style="font-size:12px;color:var(--ink2);display:flex;align-items:center;gap:7px;cursor:pointer">
+          <input type="checkbox" id="cov-flagged-only" onchange="renderCoverage()"> Only show flagged
+        </label>
+      </div>
+      <div class="section-body flush">
+        <table id="coverage-table">
+          <thead><tr>
+            <th>Client</th><th>Health</th><th class="num">MRR</th><th>Products</th>
+            <th class="num">Posts (30d)</th><th class="num">Share</th><th class="num">Open</th>
+            <th>Last delivered</th><th>Flag</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="legend">
+        <span><span class="chip coral">Starved</span> nothing delivered in the last 30 days</span>
+        <span><span class="chip amber">Monopolising</span> taking 30%+ of recent output</span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="modal-back" id="add-modal">
+  <div class="modal">
+    <h3>Add a request</h3>
+    <div class="modal-body">
+      <label>Client
+        <select id="add-client"><option value="">— pick a client —</option></select>
+      </label>
+      <label>What is needed
+        <textarea id="add-note" placeholder="e.g. Two ABM posts for the Series A founders list"></textarea>
+      </label>
+      <label>Due date
+        <input type="date" id="add-due">
+      </label>
+      <label>Requested by
+        <input type="text" id="add-by" placeholder="Who asked">
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeAddModal()">Cancel</button>
+      <button class="btn primary" onclick="saveNewRequest()">Add to queue</button>
+    </div>
+  </div>
+</div>
+
+<footer id="footer-note">Virio · Millie's Content Dashboard</footer>
+
+<script src="content-dashboard.js"></script>
+<script>
+const SUPABASE_URL  = 'https://ylplirptcybuzxnecsgp.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlscGxpcnB0Y3lidXp4bmVjc2dwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE1MDAwNjcsImV4cCI6MjA2NzA3NjA2N30.H7BnhxTNvZ8WnByos5P84M2f8qhthIRlt_5Whkwt1wg';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
+  auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true }
+});
+
+const CD = window.ContentDash;
+const CHURNED_STAGE = '1271359806';
+
+// ── STATE ───────────────────────────────────────────────────────
+let accounts = [];        // HubSpot companies, trimmed to what this page needs
+let messages = [];        // raw Slack messages
+let overrides = {};       // dashboard-owned state, keyed by request id
+let ownerIds = [];
+let requests = [];        // parsed + scored
+let charts = {};
+let lastGoodRefresh = null;
+
+const qState = { search: '', client: '', requester: '', type: '', status: 'open' };
+
+// ── AUTH ────────────────────────────────────────────────────────
+function showAuthScreen(show) {
+  document.getElementById('auth-screen').classList.toggle('hidden', !show);
+  document.getElementById('signout-btn').style.display = show ? 'none' : 'inline-block';
+}
+function setAuthError(msg) { document.getElementById('auth-error').textContent = msg; }
+
+function handleValidSession(session) {
+  const email = (session && session.user && session.user.email) || '';
+  if (!email.endsWith('@virio.ai')) {
+    sb.auth.signOut();
+    setAuthError('Access restricted to @virio.ai accounts only.');
+    showAuthScreen(true);
+    return false;
+  }
+  if (window.location.search || window.location.hash) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+  showAuthScreen(false);
+  return true;
+}
+
+async function signInWithGoogle() {
+  const btn = document.getElementById('google-signin-btn');
+  btn.disabled = true;
+  setAuthError('');
+  const { error } = await sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin + window.location.pathname, queryParams: { hd: 'virio.ai' } }
+  });
+  if (error) { setAuthError(error.message); btn.disabled = false; }
+}
+
+async function signOut() {
+  await sb.auth.signOut();
+  showAuthScreen(true);
+  accounts = []; messages = []; overrides = {}; requests = [];
+}
+
+// ── TOOLTIP ─────────────────────────────────────────────────────
+const tipEl = document.getElementById('tip');
+function showTip(e, title, rows) {
+  document.getElementById('tip-title').textContent = title;
+  document.getElementById('tip-body').innerHTML = rows.map(r => {
+    if (r === '---') return '<div class="tip-divider"></div>';
+    if (typeof r === 'string') return '<div class="tip-row"><span>' + escapeHtml(r) + '</span></div>';
+    return '<div class="tip-row"><span>' + escapeHtml(r.name) + '</span><span class="tip-val">' + escapeHtml(r.val || '') + '</span></div>';
+  }).join('');
+  tipEl.classList.add('visible');
+  posTip(e);
+}
+function posTip(e) {
+  const pad = 14, w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + w > window.innerWidth - 10) x = e.clientX - w - pad;
+  if (y + h > window.innerHeight - 10) y = e.clientY - h - pad;
+  tipEl.style.left = x + 'px';
+  tipEl.style.top = y + 'px';
+}
+function hideTip() { tipEl.classList.remove('visible'); }
+
+// ── HELPERS ─────────────────────────────────────────────────────
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function set(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
+function fmtDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+function daysFromNow(iso) {
+  if (!iso) return null;
+  return CD.daysBetween(new Date(), new Date(iso));
+}
+function relDue(iso) {
+  const d = daysFromNow(iso);
+  if (d === null) return { txt: 'No date', cls: 'grey' };
+  if (d < 0) return { txt: Math.abs(d) + 'd overdue', cls: 'red' };
+  if (d === 0) return { txt: 'Today', cls: 'coral' };
+  if (d === 1) return { txt: 'Tomorrow', cls: 'amber' };
+  if (d <= 5) return { txt: 'In ' + d + 'd', cls: 'amber' };
+  return { txt: 'In ' + d + 'd', cls: 'grey' };
+}
+function healthDot(h) { return '<span class="dot ' + (h || 'none') + '" title="' + (h || 'not set') + '"></span>'; }
+
+function markStale(reason) {
+  const el = document.getElementById('stale-banner');
+  el.classList.remove('hidden');
+  el.innerHTML = '<div><b>This is not live data.</b> The last refresh failed: ' + escapeHtml(reason) +
+    (lastGoodRefresh ? '<br>Showing what was loaded at ' + lastGoodRefresh.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '. Refresh before acting on it.'
+                     : '<br>Nothing has loaded yet.') + '</div>';
+}
+function clearStale() { document.getElementById('stale-banner').classList.add('hidden'); }
+
+// ── TABS ────────────────────────────────────────────────────────
+function switchTab(e, name) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  e.currentTarget.classList.add('active');
+  if (name === 'capacity') renderCapacity();
+  if (name === 'coverage') renderCoverage();
+}
+
+// ── LOAD ────────────────────────────────────────────────────────
+async function loadAll() {
+  const btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  try {
+    const [hsRes, healthRes, prodRes, reqRes] = await Promise.all([
+      fetch('/api/hubspot', { method: 'POST' }),
+      fetch('/api/account-health').catch(() => null),
+      fetch('/api/pr-products').catch(() => null),
+      fetch('/api/content-requests')
+    ]);
+
+    if (!hsRes.ok) {
+      const e = await hsRes.json().catch(() => ({}));
+      throw new Error(e.error || ('HubSpot ' + hsRes.status));
+    }
+    if (!reqRes.ok) throw new Error('Content requests ' + reqRes.status);
+
+    const hsData = await hsRes.json();
+    const healthData = healthRes && healthRes.ok ? await healthRes.json() : {};
+    const healthMap = healthData.map || {};
+    const productMap = prodRes && prodRes.ok ? (await prodRes.json()).map || {} : {};
+    const reqData = await reqRes.json();
+
+    accounts = (hsData.results || [])
+      .filter(r => {
+        const p = r.properties || {};
+        const ls = p.lifecyclestage || '';
+        // Live customers only. A churned account cannot be given "some
+        // love" and would pad the coverage table with dead rows.
+        return ls === 'customer' && ls !== CHURNED_STAGE
+          && p.pilot_status !== 'Exited During Pilot' && p.pilot_status !== 'Churned Post Conversion'
+          && p.domain !== 'virio.ai' && p.name !== 'Virio';
+      })
+      .map(r => {
+        const p = r.properties || {};
+        const pm = productMap[r.id];
+        return {
+          id: r.id,
+          name: p.name || p.domain || r.id,
+          mrr: (parseFloat(p.mrr) || 0) + (parseFloat(p.expansion_mrr) || 0),
+          health: healthMap[r.id] || null,
+          products: [p.product, p.upsold_products, pm && pm.product].filter(Boolean).join(', '),
+          am: p.csm || null,
+          contentManager: p.content_manager || null,
+          postsPerMonth: p.posts_per_month || null,
+          journey: p.customer_journey || null
+        };
+      });
+
+    messages = reqData.messages || [];
+    overrides = reqData.overrides || {};
+    ownerIds = reqData.ownerIds || [];
+
+    const banner = document.getElementById('slack-banner');
+    if (reqData.configured) {
+      banner.classList.add('hidden');
+    } else {
+      banner.classList.remove('hidden');
+      banner.innerHTML = '<div><b>Slack feed is not connected.</b> ' + escapeHtml(reqData.note || '') +
+        '<br>Requests added here still work, but nothing is being pulled from ' +
+        '<code>#content-support</code> yet.</div>';
+    }
+
+    const hb = document.getElementById('health-banner');
+    if (healthData.note) {
+      hb.classList.remove('hidden');
+      hb.innerHTML = '<div><b>Account health is not being counted.</b> ' + escapeHtml(healthData.note) +
+        '<br>Everything still ranks by deadline, MRR and recency — health simply scores as unknown for every account.</div>';
+    } else {
+      hb.classList.add('hidden');
+    }
+
+    rebuild();
+    lastGoodRefresh = new Date();
+    clearStale();
+    set('last-updated', 'Refreshed ' + lastGoodRefresh.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    set('footer-note', "Virio · Millie's Content Dashboard · HubSpot + #content-support · " +
+      lastGoodRefresh.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }));
+  } catch (e) {
+    markStale(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Re-derive everything from the raw inputs. Called after a load and after
+// every state write, so the screen never drifts from the store.
+function rebuild() {
+  const built = CD.buildRequests(messages, overrides, accounts, { ownerIds });
+  requests = CD.prioritise(built, accounts, {});
+  populateFilters();
+  renderQueue();
+  const active = document.querySelector('.tab-content.active');
+  if (active && active.id === 'tab-capacity') renderCapacity();
+  if (active && active.id === 'tab-coverage') renderCoverage();
+}
+
+function populateFilters() {
+  const fill = (id, values, keep) => {
+    const sel = document.getElementById(id);
+    const current = keep;
+    const first = sel.options[0].outerHTML;
+    sel.innerHTML = first + values.map(v => '<option value="' + escapeHtml(v) + '"' + (v === current ? ' selected' : '') + '>' + escapeHtml(v) + '</option>').join('');
+  };
+  fill('q-client', [...new Set(requests.map(r => r.accountName))].sort(), qState.client);
+  fill('q-requester', [...new Set(requests.map(r => r.requestedBy))].sort(), qState.requester);
+  fill('q-type', [...new Set(requests.map(r => r.type))].sort(), qState.type);
+
+  const addSel = document.getElementById('add-client');
+  addSel.innerHTML = '<option value="">— pick a client —</option>' +
+    accounts.slice().sort((a, b) => a.name.localeCompare(b.name))
+      .map(a => '<option value="' + a.id + '">' + escapeHtml(a.name) + '</option>').join('');
+}
+
+// ── QUEUE ───────────────────────────────────────────────────────
+function qSetStatus(s) {
+  qState.status = s;
+  document.querySelectorAll('#q-status-seg .seg-btn').forEach(b => b.classList.toggle('active', b.dataset.status === s));
+  renderQueue();
+}
+
+function queueFiltered() {
+  const q = qState.search.trim().toLowerCase();
+  return requests.filter(r => {
+    if (qState.status === 'open' && r.status === 'done') return false;
+    if (qState.status === 'done' && r.status !== 'done') return false;
+    if (qState.client && r.accountName !== qState.client) return false;
+    if (qState.requester && r.requestedBy !== qState.requester) return false;
+    if (qState.type && r.type !== qState.type) return false;
+    if (!q) return true;
+    return (r.accountName + ' ' + r.requestedBy + ' ' + r.text + ' ' + (r.notes || '')).toLowerCase().includes(q);
+  });
+}
+
+function renderQueue() {
+  const list = queueFiltered();
+  renderQueueKpis();
+
+  const el = document.getElementById('queue-list');
+  set('queue-count', list.length + (list.length === 1 ? ' request' : ' requests'));
+
+  if (!requests.length) {
+    el.innerHTML = '<div class="empty">Nothing loaded yet. If this stays empty, check the Slack connection above.</div>';
+    set('queue-sub', '—');
+    return;
+  }
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">No requests match these filters.</div>';
+    return;
+  }
+
+  const open = requests.filter(r => r.status !== 'done');
+  const overdue = open.filter(r => r.dueAt && daysFromNow(r.dueAt) < 0).length;
+  set('queue-sub', open.length + ' open · ' + overdue + ' overdue · ranked by deadline, account value and health');
+
+  const bands = [
+    { key: 'now', label: 'Do now' },
+    { key: 'week', label: 'This week' },
+    { key: 'queue', label: 'Queue' }
+  ];
+
+  let html = '';
+  if (qState.status === 'done') {
+    html = list.map(rowHtml).join('');
+  } else {
+    bands.forEach(b => {
+      const rows = list.filter(r => r.band === b.key && r.status !== 'done');
+      if (!rows.length) return;
+      const posts = rows.reduce((a, r) => a + (r.posts || 1), 0);
+      html += '<div class="band-head"><span class="band-name ' + b.key + '">' + b.label + '</span>' +
+        '<span class="band-meta">' + rows.length + ' request' + (rows.length === 1 ? '' : 's') + ' · ' + posts + ' piece' + (posts === 1 ? '' : 's') + ' of content</span></div>';
+      html += rows.map(rowHtml).join('');
+    });
+    const done = list.filter(r => r.status === 'done');
+    if (done.length && qState.status === 'all') {
+      html += '<div class="band-head"><span class="band-name queue">Done</span><span class="band-meta">' + done.length + '</span></div>';
+      html += done.map(rowHtml).join('');
+    }
+  }
+  el.innerHTML = html;
+}
+
+function rowHtml(r) {
+  const acct = accounts.find(a => a.id === r.accountId);
+  const due = relDue(r.dueAt);
+  const lead = r.lead || {};
+  const scoreCls = r.band === 'now' ? 'now' : r.band === 'week' ? 'week' : '';
+
+  const chips = [];
+  chips.push('<span class="chip ' + typeColor(r.type) + '">' + escapeHtml(r.type) + '</span>');
+  if ((r.posts || 1) > 1) chips.push('<span class="chip grey">' + r.posts + ' pieces</span>');
+  if (lead.rush) chips.push('<span class="chip red" title="Less than the agreed 3 working days of notice">Rush · ' + lead.days + 'd notice</span>');
+  if (r.status === 'blocked') chips.push('<span class="chip amber">Needs a brief</span>');
+  if (!r.accountId) chips.push('<span class="chip amber" title="No HubSpot account matched — set the client to rank it properly">Unmatched</span>');
+  if (acct && acct.health) chips.push('<span class="chip grey">' + healthDot(acct.health) + ' ' + acct.health + '</span>');
+
+  const links = (r.links || []).slice(0, 3).map((u, i) => {
+    const label = /\/lineage\//.test(u) ? 'Lineage post' : /docs\.google|drive\.google/.test(u) ? 'Google doc' : /linkedin\.com/.test(u) ? 'LinkedIn' : 'Link ' + (i + 1);
+    return '<a href="' + escapeHtml(u) + '" target="_blank" rel="noopener">' + label + ' ↗</a>';
+  });
+  if (r.permalink) links.push('<a href="' + escapeHtml(r.permalink) + '" target="_blank" rel="noopener">Slack ↗</a>');
+
+  const body = r.notes || r.text || '';
+
+  return '<div class="req' + (r.status === 'done' ? ' done' : '') + '">' +
+    '<input type="checkbox" class="req-check"' + (r.status === 'done' ? ' checked' : '') +
+      ' onchange="toggleDone(\'' + escapeHtml(r.id) + '\', this.checked)" title="Mark delivered">' +
+    '<div class="req-score ' + scoreCls + '" onmousemove="scoreTip(event,\'' + escapeHtml(r.id) + '\')" onmouseleave="hideTip()">' + r.score + '</div>' +
+    '<div>' +
+      '<div class="req-client">' + escapeHtml(r.accountName) + '</div>' +
+      '<div class="req-client-meta">' +
+        (acct ? '<span class="mrr">' + CD.fmtMrr(acct.mrr) + ' MRR</span>' : '') +
+        '<span>' + escapeHtml(r.requestedBy) + '</span>' +
+      '</div>' +
+    '</div>' +
+    '<div>' +
+      '<div class="req-title">' + escapeHtml(body).slice(0, 400) + '</div>' +
+      '<div class="req-client-meta" style="margin-top:5px">' + chips.join(' ') + '</div>' +
+      (links.length ? '<div class="req-links">' + links.join('') + '</div>' : '') +
+    '</div>' +
+    '<div class="req-when"><b>' + fmtDate(r.requestedAt) + '</b>asked</div>' +
+    '<div class="req-when"><b>' + fmtDate(r.dueAt) + '</b><span class="chip ' + due.cls + '">' + due.txt + '</span></div>' +
+    '<div class="req-status-cell">' +
+      '<select class="req-status" onchange="setStatus(\'' + escapeHtml(r.id) + '\', this.value)">' +
+        ['new', 'accepted', 'in_progress', 'blocked', 'done'].map(s =>
+          '<option value="' + s + '"' + (r.status === s ? ' selected' : '') + '>' + CD.STATUS_LABEL[s] + '</option>').join('') +
+      '</select>' +
+    '</div>' +
+  '</div>';
+}
+
+function typeColor(t) {
+  return { ABM: 'purple', Launch: 'coral', Rework: 'amber', Strategy: 'blue', Profile: 'teal', Hiring: 'grey' }[t] || 'grey';
+}
+
+function scoreTip(e, id) {
+  const r = requests.find(x => x.id === id);
+  if (!r) return;
+  const rows = r.reasons.map(x => ({ name: x.label, val: '+' + x.points }));
+  rows.push('---');
+  rows.push({ name: 'Total', val: String(r.score) });
+  rows.push({ name: 'Band', val: r.bandLabel });
+  showTip(e, r.accountName, rows);
+}
+
+function renderQueueKpis() {
+  const open = requests.filter(r => r.status !== 'done');
+  const overdue = open.filter(r => r.dueAt && daysFromNow(r.dueAt) < 0);
+  const dueWeek = open.filter(r => { const d = daysFromNow(r.dueAt); return d !== null && d >= 0 && d <= 7; });
+  const rush = open.filter(r => r.lead && r.lead.rush);
+  const openPosts = open.reduce((a, r) => a + (r.posts || 1), 0);
+
+  const thisWeek = CD.weekKey(new Date());
+  const deliveredThisWeek = requests
+    .filter(r => r.status === 'done' && CD.weekKey(r.completedAt || r.requestedAt) === thisWeek)
+    .reduce((a, r) => a + (r.posts || 1), 0);
+
+  document.getElementById('queue-kpis').innerHTML = [
+    kpi('Open requests', open.length, openPosts + ' pieces of content'),
+    kpi('Overdue', overdue.length, overdue.length ? 'past the date they asked for' : 'nothing past due', overdue.length ? 'alert' : 'good'),
+    kpi('Due in 7 days', dueWeek.length, 'with a date attached'),
+    kpi('Rush requests', rush.length, 'under 3 working days notice', rush.length ? 'alert' : 'good'),
+    kpi('Delivered this week', deliveredThisWeek, 'pieces marked done', 'good')
+  ].join('');
+}
+
+function kpi(label, val, sub, cls) {
+  return '<div class="kpi ' + (cls || '') + '"><div class="kpi-label">' + escapeHtml(label) + '</div>' +
+    '<div class="kpi-val">' + escapeHtml(String(val)) + '</div>' +
+    '<div class="kpi-sub">' + escapeHtml(sub || '') + '</div></div>';
+}
+
+// ── WRITES ──────────────────────────────────────────────────────
+async function patchRequest(id, patch) {
+  // Optimistic: apply locally, then persist. On failure we reload from
+  // the store rather than leaving the screen showing a write that never
+  // landed.
+  overrides[id] = Object.assign({}, overrides[id], patch);
+  Object.keys(patch).forEach(k => { if (patch[k] === null) delete overrides[id][k]; });
+  rebuild();
+  try {
+    const res = await fetch('/api/content-request-write', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, patch })
+    });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || ('write failed (' + res.status + ')'));
+    }
+    const data = await res.json();
+    if (data.entry) overrides[id] = data.entry; else delete overrides[id];
+    rebuild();
+  } catch (e) {
+    markStale('could not save that change — ' + e.message);
+    await loadAll();
+  }
+}
+
+function toggleDone(id, checked) {
+  patchRequest(id, checked
+    ? { status: 'done', completedAt: new Date().toISOString() }
+    : { status: 'accepted', completedAt: null });
+}
+
+function setStatus(id, status) {
+  patchRequest(id, status === 'done'
+    ? { status: 'done', completedAt: new Date().toISOString() }
+    : { status, completedAt: null });
+}
+
+// ── ADD REQUEST ─────────────────────────────────────────────────
+function openAddModal() {
+  document.getElementById('add-modal').classList.add('open');
+  document.getElementById('add-note').value = '';
+  document.getElementById('add-due').value = '';
+  document.getElementById('add-by').value = '';
+}
+function closeAddModal() { document.getElementById('add-modal').classList.remove('open'); }
+
+async function saveNewRequest() {
+  const clientId = document.getElementById('add-client').value;
+  const note = document.getElementById('add-note').value.trim();
+  const due = document.getElementById('add-due').value;
+  const by = document.getElementById('add-by').value.trim();
+  if (!clientId || !note) { alert('Pick a client and say what is needed.'); return; }
+
+  const acct = accounts.find(a => a.id === clientId);
+  const id = 'manual-' + Date.now();
+  const patch = {
+    manual: true,
+    clientId,
+    client: acct ? acct.name : '',
+    note,
+    text: note,
+    type: CD.classifyType(note),
+    requestedAt: new Date().toISOString(),
+    requestedBy: by || 'Added by hand',
+    status: 'accepted'
+  };
+  if (due) patch.dueAt = new Date(due + 'T12:00:00').toISOString();
+  closeAddModal();
+  await patchRequest(id, patch);
+}
+
+// ── CAPACITY ────────────────────────────────────────────────────
+function renderCapacity() {
+  const weekly = CD.weeklyVolume(requests, { weeks: 12 });
+  const cap = CD.capacitySummary(weekly, {});
+  const lead = CD.leadTimeSummary(requests);
+
+  document.getElementById('cap-kpis').innerHTML = [
+    kpi('Avg delivered / week', cap.avgDelivered, 'over ' + cap.weeksMeasured + ' completed weeks'),
+    kpi('Busiest week', cap.peakDelivered, 'pieces delivered'),
+    kpi('Avg requested / week', cap.avgRequested, 'pieces asked for'),
+    kpi('Intake vs output', cap.intakeRatio == null ? '—' : cap.intakeRatio + '×',
+      cap.intakeRatio > 1 ? 'the queue is growing' : 'keeping up',
+      cap.intakeRatio > 1 ? 'alert' : 'good'),
+    kpi('Rush requests', lead.rushPct + '%', 'of dated requests, under 3 days', lead.rushPct > 25 ? 'alert' : 'good')
+  ].join('');
+
+  const labels = weekly.map(w => new Date(w.week + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+  drawChart('chart-volume', {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Requested', data: weekly.map(w => w.requestedPosts), backgroundColor: '#378ADD' },
+        { label: 'Delivered', data: weekly.map(w => w.deliveredPosts), backgroundColor: '#1D9E75' }
+      ]
+    },
+    options: barOpts('Pieces of content')
+  });
+
+  document.getElementById('volume-note').innerHTML = cap.weeksMeasured
+    ? 'Across ' + cap.weeksMeasured + ' completed weeks, delivery has averaged <b>' + cap.avgDelivered +
+      '</b> pieces a week and peaked at <b>' + cap.peakDelivered + '</b>. ' +
+      (cap.intakeRatio > 1
+        ? 'Intake is running at <b>' + cap.intakeRatio + '×</b> output, so the backlog is growing — that gap is the number to negotiate against.'
+        : 'Intake and output are roughly balanced.')
+    : 'Not enough completed weeks yet. This fills in as requests get ticked off.';
+
+  // Across everything asked for, not just what is still open — the point
+  // is the shape of the work over time, not today's snapshot.
+  const types = {};
+  requests.forEach(r => { types[r.type] = (types[r.type] || 0) + (r.posts || 1); });
+  const typeLabels = Object.keys(types).sort((a, b) => types[b] - types[a]);
+  drawChart('chart-type', {
+    type: 'doughnut',
+    data: {
+      labels: typeLabels,
+      datasets: [{
+        data: typeLabels.map(t => types[t]),
+        backgroundColor: ['#7F77DD', '#D85A30', '#BA7517', '#378ADD', '#1D9E75', '#888780', '#D4537E']
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { font: { family: 'DM Sans', size: 12 } } } } }
+  });
+
+  drawChart('chart-lead', {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Requests in', data: weekly.map(w => w.requested), backgroundColor: '#CFCCC5' },
+        { label: 'Under 3 days notice', data: weekly.map(w => w.rush), backgroundColor: '#D85A30' }
+      ]
+    },
+    options: barOpts('Requests')
+  });
+
+  document.getElementById('lead-note').innerHTML =
+    '<b>' + lead.rush + '</b> of <b>' + lead.dated + '</b> dated requests arrived with less than 3 working days notice (' +
+    lead.rushPct + '%). A further <b>' + lead.undated + '</b> arrived with no date at all, which is its own problem — ' +
+    'an undated request cannot be scheduled, only interrupted.';
+
+  const tbody = document.querySelector('#requester-table tbody');
+  tbody.innerHTML = lead.byRequester.length
+    ? lead.byRequester.map(r => {
+        const pct = r.total ? Math.round((r.rush / r.total) * 100) : 0;
+        return '<tr' + (pct >= 50 && r.total > 1 ? ' class="flagged"' : '') + '><td>' + escapeHtml(r.requester) + '</td>' +
+          '<td class="num">' + r.total + '</td><td class="num">' + r.rush + '</td><td class="num">' + pct + '%</td></tr>';
+      }).join('')
+    : '<tr><td colspan="4" class="empty">No requests yet.</td></tr>';
+}
+
+function barOpts(yLabel) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: { stacked: false, grid: { display: false }, ticks: { font: { family: 'DM Sans', size: 11 } } },
+      y: { beginAtZero: true, title: { display: true, text: yLabel, font: { family: 'DM Sans', size: 11 } },
+           ticks: { precision: 0, font: { family: 'DM Sans', size: 11 } }, grid: { color: 'rgba(26,25,22,0.06)' } }
+    },
+    plugins: { legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 12 }, boxWidth: 12 } } }
+  };
+}
+
+function drawChart(id, cfg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(el.getContext('2d'), cfg);
+}
+
+// ── COVERAGE ────────────────────────────────────────────────────
+function renderCoverage() {
+  const cov = CD.coverageByAccount(requests, accounts, {});
+  const flaggedOnly = document.getElementById('cov-flagged-only').checked;
+  const starved = cov.rows.filter(r => r.starved);
+  const monopolising = cov.rows.filter(r => r.monopolising);
+
+  document.getElementById('cov-kpis').innerHTML = [
+    kpi('Clients on the book', cov.rows.length, 'live customers'),
+    kpi('Touched in 30 days', cov.rows.length - starved.length, 'got at least one piece'),
+    kpi('Starved', starved.length, 'nothing in 30 days', starved.length ? 'alert' : 'good'),
+    kpi('Pieces delivered (30d)', cov.totalRecentPosts, 'across the whole book'),
+    kpi('Unmatched requests', cov.unmatched, cov.unmatched ? 'set a client on these' : 'all matched', cov.unmatched ? 'alert' : 'good')
+  ].join('');
+
+  const rows = flaggedOnly ? cov.rows.filter(r => r.starved || r.monopolising) : cov.rows;
+  const tbody = document.querySelector('#coverage-table tbody');
+  tbody.innerHTML = rows.length ? rows.map(r => {
+    const flags = [];
+    if (r.monopolising) flags.push('<span class="chip amber">Monopolising</span>');
+    if (r.starved) flags.push('<span class="chip coral">Starved</span>');
+    return '<tr' + (r.starved || r.monopolising ? ' class="flagged"' : '') + '>' +
+      '<td>' + escapeHtml(r.name) + '</td>' +
+      '<td>' + healthDot(r.health) + ' <span style="font-size:12px;color:var(--ink2)">' + escapeHtml(r.health || 'not set') + '</span></td>' +
+      '<td class="num">' + CD.fmtMrr(r.mrr) + '</td>' +
+      '<td style="font-size:12px;color:var(--ink2)">' + escapeHtml(r.products || '—') + '</td>' +
+      '<td class="num">' + r.recentPosts + '</td>' +
+      '<td class="num">' + (r.share ? Math.round(r.share * 100) + '%' : '—') + '</td>' +
+      '<td class="num">' + r.openRequests + '</td>' +
+      '<td>' + fmtDate(r.lastDeliveredAt) + '</td>' +
+      '<td>' + (flags.join(' ') || '') + '</td>' +
+    '</tr>';
+  }).join('') : '<tr><td colspan="9" class="empty">Nothing to show.</td></tr>';
+}
+
+// ── BOOT ────────────────────────────────────────────────────────
+document.addEventListener('click', e => {
+  if (e.target.id === 'add-modal') closeAddModal();
+});
+
+sb.auth.getSession().then(({ data: { session } }) => {
+  if (session && handleValidSession(session)) loadAll();
+  else showAuthScreen(true);
+});
+
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_IN' && session) {
+    if (handleValidSession(session)) loadAll();
+  } else if (event === 'SIGNED_OUT') {
+    showAuthScreen(true);
+  }
+});
+</script>
+</body>
+</html>

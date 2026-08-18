@@ -1,0 +1,12 @@
+{
+  "name": "virio-content-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Millie's Content Dashboard — content request queue, capacity tracking and account coverage.",
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  },
+  "scripts": {
+    "test": "node content-dashboard.test.js"
+  }
+}
