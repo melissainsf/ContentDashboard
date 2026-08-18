@@ -3,7 +3,10 @@
 A content request queue, capacity tracker, coverage view and performance
 report for the content role. Deploys to Netlify from this repo.
 
-Google sign-in, `@virio.ai` accounts only.
+Access is gated by **Netlify project visibility** (Project configuration →
+Visitor access), enforced at the edge. There is no app-level login: if the
+page loads, the visitor is already authenticated, and the `/api/*`
+functions are behind the same gate.
 
 It exists to answer four questions that came out of the 2026-08-13
 Melissa ↔ Millie sync:
@@ -209,6 +212,21 @@ https://app.virio.ai/api/lineage/{company}/posts/{postId}/analytics
 Until `SLACK_BOT_TOKEN` is set the page loads and works, shows a banner
 saying the feed is not connected, and requests can still be added by hand.
 It never shows an empty queue as though there were no work.
+
+### Access
+
+Set **Project configuration → Visitor access** to `Private` (team members
+sign in with their Netlify login) or `Password`. Apply it to **production
+and previews** — leaving previews open defeats the point.
+
+This matters more than it looks: the `/api/*` functions return client
+names, MRR and churn risk, and they do **not** authenticate callers
+themselves. Netlify's gate is the only thing in front of them. If the
+project is ever set to `Public`, that data is public with it.
+
+Anyone who needs the dashboard — Millie, AMs — must be a member of the
+Netlify team under `Private`. If per-seat cost is a problem, either switch
+to `Password` or install an OAuth provider under Access & security → OAuth.
 
 ### Storage
 

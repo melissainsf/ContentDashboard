@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -27,18 +26,6 @@
   --radius:10px;--radius-sm:6px
 }
 body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;font-size:14px;line-height:1.6}
-/* AUTH */
-#auth-screen{position:fixed;inset:0;z-index:10000;background:var(--header-bg);display:flex;align-items:center;justify-content:center}
-#auth-screen.hidden{display:none}
-.auth-card{background:#242320;border:1px solid rgba(245,243,238,0.1);border-radius:14px;padding:48px 40px;max-width:400px;width:90%;text-align:center}
-.auth-logo{font-family:'Syne',sans-serif;font-size:28px;font-weight:700;color:#F5F3EE;letter-spacing:-0.02em;margin-bottom:6px}
-.auth-subtitle{font-size:13px;color:rgba(245,243,238,0.4);margin-bottom:36px;letter-spacing:0.04em;text-transform:uppercase}
-.auth-btn{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;padding:12px 20px;background:#fff;color:#1A1916;border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:opacity 0.15s}
-.auth-btn:hover{opacity:0.9}
-.auth-btn:disabled{opacity:0.5;cursor:default}
-.auth-btn svg{width:18px;height:18px;flex-shrink:0}
-.auth-error{margin-top:16px;font-size:12px;color:#F09595;min-height:18px}
-.auth-note{margin-top:20px;font-size:11px;color:rgba(245,243,238,0.25)}
 /* HEADER */
 header{background:var(--header-bg);color:var(--header-ink);padding:18px 32px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 .header-left{display:flex;align-items:baseline;gap:14px}
@@ -49,8 +36,6 @@ header{background:var(--header-bg);color:var(--header-ink);padding:18px 32px;dis
 #refresh-btn:hover{background:rgba(245,243,238,0.2)}
 #refresh-btn:disabled{opacity:0.4;cursor:default}
 #last-updated{font-size:12px;color:rgba(245,243,238,0.38)}
-.signout-btn{background:rgba(245,243,238,0.08);border:1px solid rgba(245,243,238,0.15);color:rgba(245,243,238,0.5);padding:6px 12px;border-radius:var(--radius-sm);font-family:'DM Sans',sans-serif;font-size:12px;cursor:pointer;transition:all 0.15s}
-.signout-btn:hover{background:rgba(245,243,238,0.15);color:var(--header-ink)}
 .header-link{font-size:12px;color:rgba(245,243,238,0.45);text-decoration:none;border-bottom:1px solid rgba(245,243,238,0.2)}
 .header-link:hover{color:var(--header-ink)}
 /* TABS */
@@ -179,24 +164,6 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
 </head>
 <body>
 
-<div id="auth-screen">
-  <div class="auth-card">
-    <div class="auth-logo">Virio</div>
-    <div class="auth-subtitle">Content Dashboard</div>
-    <button class="auth-btn" id="google-signin-btn" onclick="signInWithGoogle()">
-      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
-        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-      </svg>
-      Sign in with Google
-    </button>
-    <div class="auth-error" id="auth-error"></div>
-    <div class="auth-note">Access restricted to @virio.ai accounts</div>
-  </div>
-</div>
-
 <div id="tip"><div class="tip-title" id="tip-title"></div><div id="tip-body"></div></div>
 
 <header>
@@ -207,7 +174,6 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
   <div class="header-right">
     <span id="last-updated"></span>
     <button id="refresh-btn" onclick="loadAll()">Refresh</button>
-    <button class="signout-btn" id="signout-btn" onclick="signOut()">Sign out</button>
   </div>
 </header>
 
@@ -424,12 +390,6 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
 
 <script src="content-dashboard.js"></script>
 <script>
-const SUPABASE_URL  = 'https://ylplirptcybuzxnecsgp.supabase.co';
-const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlscGxpcnB0Y3lidXp4bmVjc2dwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE1MDAwNjcsImV4cCI6MjA2NzA3NjA2N30.H7BnhxTNvZ8WnByos5P84M2f8qhthIRlt_5Whkwt1wg';
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
-  auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true }
-});
-
 const CD = window.ContentDash;
 const CHURNED_STAGE = '1271359806';
 
@@ -446,45 +406,6 @@ let lineageConfigured = false;
 let lastGoodRefresh = null;
 
 const qState = { search: '', client: '', requester: '', type: '' };
-
-// ── AUTH ────────────────────────────────────────────────────────
-function showAuthScreen(show) {
-  document.getElementById('auth-screen').classList.toggle('hidden', !show);
-  document.getElementById('signout-btn').style.display = show ? 'none' : 'inline-block';
-}
-function setAuthError(msg) { document.getElementById('auth-error').textContent = msg; }
-
-function handleValidSession(session) {
-  const email = (session && session.user && session.user.email) || '';
-  if (!email.endsWith('@virio.ai')) {
-    sb.auth.signOut();
-    setAuthError('Access restricted to @virio.ai accounts only.');
-    showAuthScreen(true);
-    return false;
-  }
-  if (window.location.search || window.location.hash) {
-    window.history.replaceState(null, '', window.location.pathname);
-  }
-  showAuthScreen(false);
-  return true;
-}
-
-async function signInWithGoogle() {
-  const btn = document.getElementById('google-signin-btn');
-  btn.disabled = true;
-  setAuthError('');
-  const { error } = await sb.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: window.location.origin + window.location.pathname, queryParams: { hd: 'virio.ai' } }
-  });
-  if (error) { setAuthError(error.message); btn.disabled = false; }
-}
-
-async function signOut() {
-  await sb.auth.signOut();
-  showAuthScreen(true);
-  accounts = []; messages = []; overrides = {}; requests = [];
-}
 
 // ── TOOLTIP ─────────────────────────────────────────────────────
 const tipEl = document.getElementById('tip');
@@ -1231,18 +1152,11 @@ document.addEventListener('click', e => {
   if (e.target.id === 'add-modal') closeAddModal();
 });
 
-sb.auth.getSession().then(({ data: { session } }) => {
-  if (session && handleValidSession(session)) loadAll();
-  else showAuthScreen(true);
-});
-
-sb.auth.onAuthStateChange((event, session) => {
-  if (event === 'SIGNED_IN' && session) {
-    if (handleValidSession(session)) loadAll();
-  } else if (event === 'SIGNED_OUT') {
-    showAuthScreen(true);
-  }
-});
+// Access is gated by Netlify project visibility, at the edge, before
+// anything here is served — including the /api/* functions. There is no
+// app-level login: if this code is running, the visitor is already
+// authenticated.
+loadAll();
 </script>
 </body>
 </html>
