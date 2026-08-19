@@ -204,12 +204,16 @@ older guessed shapes stay as a fallback if the real path ever moves.
 
 That endpoint scopes every lookup to a company id (uuid), but a request
 here only carries the company slug parsed from the pasted Lineage link.
-`lineage-analytics.js` maps slug → uuid with a hardcoded
-`LINEAGE_COMPANY_IDS` table (a snapshot taken via the Lineage MCP's
-`list_companies` tool), and sends the resolved id as `?company_id=`. **This
-table goes stale** as clients are added or renamed in Lineage — if a
-client's Post Performance data is missing despite the post being
-published, re-run `list_companies` and refresh the table.
+`lineage-analytics.js` maps slug → uuid via `lineage-company-ids.json` (a
+snapshot taken through the Lineage MCP's `list_companies` tool), and sends
+the resolved id as `?company_id=`. **This table goes stale** as clients
+are added or renamed in Lineage — if a client's Post Performance data is
+missing despite the post being published, re-run `list_companies` and
+refresh the table.
+
+See `docs/lineage-post-analytics.md` for the full request flow, why the
+URL alone isn't enough, and the evidence behind treating this snapshot as
+production data.
 
 `{company}` and `{postId}` are substituted per post.
 

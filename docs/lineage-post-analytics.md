@@ -34,6 +34,31 @@ If a slug isn't in the table, `company_id` is simply omitted from the
 request and the call falls through to a handful of older guessed URL
 shapes, kept only as a fallback in case the real path ever moves.
 
+## Why setting `LINEAGE_POST_ANALYTICS_URL` alone doesn't work
+
+The original design (see git history on this file's function) assumed
+the only missing piece was the URL itself: point `LINEAGE_POST_ANALYTICS_URL`
+at the real path and everything would work. That turned out to be wrong
+in a way no URL template can fix.
+
+Lineage's real endpoint (`GET /api/analytics/{postId}`) requires a
+`company_id` **query parameter**, and its handler rejects the request
+outright without one — see `requireCompanyAccess` and the `company_id`
+check in Lineage's own `src/routes/api/analytics/$draftId.ts`. A caller
+that doesn't supply `company_id` never even reaches the analytics lookup.
+
+The dashboard has no uuid to put there. Every place this app learns about
+a post — the Slack message, the pasted Lineage link — only ever carries
+the company **slug**. There is no cheap "resolve slug to uuid" endpoint on
+Lineage's side to call at request time. So no matter how correct the URL
+template is, the request 400s without a second piece of information the
+URL alone can't carry. That's what `lineage-company-ids.json` supplies.
+
+(We also considered changing Lineage's route to make `company_id`
+optional and resolve it server-side from the post — a small, reviewed
+change — but reverted it once this mapping made it unnecessary. No fix on
+Lineage's side is required for this to work.)
+
 ## The company table
 
 `netlify/functions/lineage-company-ids.json` — a plain `{ slug: uuid }`
@@ -74,12 +99,21 @@ it isn't connected — it never shows a silently empty table.
   than a guessed number.
 - **The company table goes stale.** It's a hand-maintained snapshot (see
   above), not a live sync.
-- **Unconfirmed: which Lineage environment the snapshot came from.** The
-  ids in `lineage-company-ids.json` were pulled via the Lineage MCP tool,
-  which is assumed — not confirmed — to be pointed at production
-  (`app.virio.ai`). If Post Performance data is wrong or missing across
-  the board rather than for one client, confirm with whoever administers
-  that MCP connection which environment it targets.
+- **The snapshot is very likely production, not staging — checked, not
+  assumed.** `lineage-mcp/.env.example` (the config template for the
+  server backing the Lineage MCP tool used to take this snapshot) points
+  `SUPABASE_URL` at `ylplirptcybuzxnecsgp.supabase.co`. Per
+  `jacquard/infra/staging-clone/README.md`, that project is explicitly
+  labeled `Jacquard - PROD`; the separate staging project
+  (`kopxdsvcyhxzhirkqlxg.supabase.co`, `Jacquard - STAGING`) is what local
+  dev in `lineage`/`virio-api` uses instead. This is a config template, not
+  a live-inspected value, so it's strong evidence rather than a
+  certainty — and even in the unlikely case the deployed MCP is pointed at
+  staging instead, that project is refreshed weekly from a full prod clone
+  (same doc), so company ids would still match prod for anything not
+  created in the last week. If Post Performance data is wrong or missing
+  across the board rather than for one client, that weekly-lag window is
+  the first thing to rule out.
 
 ## Failure modes (all non-fatal to the page)
 
