@@ -32,6 +32,25 @@
 
 const MAX_POSTS = 120;      // one dashboard load; beyond this, paginate
 
+// Lineage's analytics endpoint scopes every lookup to a company_id (uuid),
+// but a request pasted into #content-support only ever carries the company
+// slug (the segment in app.virio.ai/lineage/<slug>/<post-uuid>). This maps
+// slug -> uuid so that id can be sent on every request.
+//
+// Snapshot taken once via the Lineage MCP's list_companies tool — not a live
+// call, so it goes stale as clients are added or renamed. Re-run
+// list_companies and refresh lineage-company-ids.json when a Post
+// Performance row is missing for a client that's actually in Lineage.
+// Longer term this belongs behind a real slug->id lookup (a Lineage
+// endpoint, or a small periodic sync into Netlify Blobs) rather than a
+// hand-maintained list.
+const LINEAGE_COMPANY_IDS = require('./lineage-company-ids.json');
+
+function companyIdFor(slug) {
+  if (!slug) return null;
+  return LINEAGE_COMPANY_IDS[String(slug).trim().toLowerCase()] || null;
+}
+
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') return reply(405, { error: 'POST only' });
 
@@ -58,11 +77,14 @@ exports.handler = async function (event) {
   const template = process.env.LINEAGE_POST_ANALYTICS_URL || null;
   const debug = process.env.LINEAGE_DEBUG === '1';
 
-  // The exact REST path was not confirmed when this was built, so an
-  // explicit template always wins and a few plausible shapes are tried
-  // behind it. Once the real path is known, set
-  // LINEAGE_POST_ANALYTICS_URL and the guessing stops.
+  // The real endpoint (confirmed against Lineage's own analytics-service.ts):
+  //   GET {base}/analytics/{postId}?company_id={uuid}
+  // company_id is attached separately in fill(), via LINEAGE_COMPANY_IDS, so
+  // it isn't written into the shape strings below. An explicit
+  // LINEAGE_POST_ANALYTICS_URL always wins; the older guesses stay as a
+  // fallback in case the real path ever moves.
   const shapes = template ? [template] : [
+    base + '/analytics/{postId}',
     base + '/lineage/{company}/posts/{postId}/analytics',
     base + '/posts/{postId}/analytics',
     base + '/lineage/posts/{postId}/analytics',
@@ -134,9 +156,12 @@ exports.handler = async function (event) {
 };
 
 function fill(shape, ref) {
-  return shape
+  const url = shape
     .replace('{company}', encodeURIComponent(ref.company || ''))
     .replace('{postId}', encodeURIComponent(ref.postId || ''));
+  const companyId = companyIdFor(ref.company);
+  if (!companyId) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'company_id=' + encodeURIComponent(companyId);
 }
 
 // Accept the analytics object at the top level or wrapped, and tolerate

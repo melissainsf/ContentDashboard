@@ -155,14 +155,13 @@ posts, so there is no denominator for an engagement *rate* either.
 Reactions, comments and reposts are real numbers; anything claiming reach
 would be invented.
 
-**ICP rate may be blank.** The column and the roll-ups are built and
-tested, but the per-post Lineage API surface reachable at build time did
-not return an ICP rate — it appears on the Lineage Analytics tab in the
-web app. The function reads it from any of the plausible field names and
-leaves it `null` when absent, rendering as `—` rather than a made-up
-percentage. Point `LINEAGE_POST_ANALYTICS_URL` at the endpoint behind that
-Analytics tab and the column fills in. The response says plainly when ICP
-rate is not coming through, so a column of dashes never reads as broken.
+**ICP rate is always blank, on purpose.** Lineage's per-post analytics
+endpoint (`/api/analytics/{postId}`) does not return an ICP rate — that
+number only exists inside aggregate ICP reports, matched to a post by date
+rather than by post id, which is not reliable enough to show per post. The
+function reads it from any of the plausible field names anyway, in case
+Lineage ever adds it to that endpoint, and leaves it `null` when absent,
+rendering as `—` rather than a made-up percentage.
 
 Engagement counts sync periodically from LinkedIn and are typically hours
 stale — both views show the sync time.
@@ -188,7 +187,7 @@ The channel is private, so a Slack app must be created and invited.
 | `HUBSPOT_TOKEN` | **yes** | No accounts load — the page fails loud |
 | `SLACK_BOT_TOKEN` | **yes** | No live requests; manual entry still works |
 | `LINEAGE_API_KEY` | for performance | Post Performance tab says it is not connected |
-| `LINEAGE_POST_ANALYTICS_URL` | see below | Falls back to guessing the path |
+| `LINEAGE_POST_ANALYTICS_URL` | no | Defaults to the real endpoint, see below |
 | `SLACK_CONTENT_CHANNEL_ID` | no | Defaults to `C0BFY7Y3MK7` (`#content-support`) |
 | `SLACK_CONTENT_OWNER_IDS` | no | Defaults to `U0A2VGT6NRL` (Millie) |
 | `SLACK_CONTENT_DAYS` | no | Defaults to `120` |
@@ -197,15 +196,20 @@ The channel is private, so a Slack app must be created and invited.
 
 `HUBSPOT_TOKEN` needs `crm.objects.companies.read`.
 
-**`LINEAGE_POST_ANALYTICS_URL` needs confirming with whoever owns the
-Lineage API.** The per-post analytics data shape is known and handled, but
-the exact REST path was never confirmed, so the function tries a few
-plausible shapes and reports failure rather than pretending. Set it to the
-real path as a template and the guessing stops:
+**`LINEAGE_POST_ANALYTICS_URL`** defaults to Lineage's real per-post
+analytics endpoint, `{LINEAGE_API_BASE}/analytics/{postId}` — confirmed
+against Lineage's own `analytics-service.ts`. Set this env var only to
+override that default (for example against a staging Lineage instance);
+older guessed shapes stay as a fallback if the real path ever moves.
 
-```
-https://app.virio.ai/api/lineage/{company}/posts/{postId}/analytics
-```
+That endpoint scopes every lookup to a company id (uuid), but a request
+here only carries the company slug parsed from the pasted Lineage link.
+`lineage-analytics.js` maps slug → uuid with a hardcoded
+`LINEAGE_COMPANY_IDS` table (a snapshot taken via the Lineage MCP's
+`list_companies` tool), and sends the resolved id as `?company_id=`. **This
+table goes stale** as clients are added or renamed in Lineage — if a
+client's Post Performance data is missing despite the post being
+published, re-run `list_companies` and refresh the table.
 
 `{company}` and `{postId}` are substituted per post.
 
