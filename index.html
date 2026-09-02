@@ -342,7 +342,7 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
       <div class="section-body flush">
         <table id="perf-table">
           <thead><tr>
-            <th>Client</th><th>Post</th><th>Type</th><th>Published</th>
+            <th>Client</th><th>Post</th><th>Type</th><th>Worked by</th><th>Published</th>
             <th class="num">Reactions</th><th class="num">Comments</th><th class="num">Reposts</th>
             <th class="num">ICP rate</th><th class="num">Total</th>
           </tr></thead>
@@ -1048,7 +1048,7 @@ function renderPerformance() {
     kpi('Posts measured', perf.measuredPosts, 'published and synced'),
     kpi('Total engagement', perf.engagement, 'reactions + comments + reposts'),
     kpi('Avg per post', perf.avgEngagement, 'across measured posts'),
-    kpi('Avg ICP rate', avgIcp == null ? '—' : avgIcp + '%', avgIcp == null ? 'not returned by Lineage yet' : 'of engagement from ICP'),
+    kpi('Avg ICP rate', avgIcp == null ? '—' : avgIcp + '%', avgIcp == null ? 'no ICP report matched these posts' : 'of engagement from ICP, by publish date'),
     kpi('Awaiting data', perf.unmeasuredRequests, perf.unmeasuredRequests ? 'not published or not synced' : 'all posts measured')
   ].join('');
 
@@ -1068,6 +1068,7 @@ function renderPerformance() {
       '<td>' + escapeHtml(r.accountName) + '</td>' +
       '<td style="font-size:12px;color:var(--ink2)">' + (link ? '<a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + body + '</a>' : body) + partial + '</td>' +
       '<td><span class="chip ' + typeColor(r.type) + '">' + escapeHtml(r.type) + '</span></td>' +
+      '<td style="font-size:12px;color:var(--ink2)">' + workedByCell(r.workedBy) + '</td>' +
       '<td style="font-size:12px;color:var(--ink2)">' + fmtDate(p.postedAt || r.completedAt || r.requestedAt) + '</td>' +
       '<td class="num">' + p.likes + '</td>' +
       '<td class="num">' + p.comments + '</td>' +
@@ -1075,7 +1076,7 @@ function renderPerformance() {
       '<td class="num">' + (p.icpRate != null ? p.icpRate + '%' : '<span style="color:var(--ink3)">—</span>') + '</td>' +
       '<td class="num"><b>' + p.engagement + '</b></td>' +
     '</tr>';
-  }).join('') : '<tr><td colspan="9" class="empty">No measured posts yet.</td></tr>';
+  }).join('') : '<tr><td colspan="10" class="empty">No measured posts yet.</td></tr>';
 
   const top = perf.byAccount.slice(0, 12);
   drawChart('chart-perf', {
@@ -1196,6 +1197,21 @@ function renderCompleted() {
   }).join('');
 }
 
+// Who on our side moved this post along. Lineage post records carry no
+// author, so this is read off each post's lifecycle feed: the teammates who
+// sent it to review, approved, scheduled or published it. Blank is a real
+// answer — a self-managed client, or a post whose only handling was edits
+// (which the feed deliberately does not record).
+function workedByCell(workedBy) {
+  const list = workedBy || [];
+  if (!list.length) return '<span style="color:var(--ink3)">\u2014</span>';
+  const first = escapeHtml(list[0].name);
+  const rest = list.length > 1
+    ? ' <span class="chip grey" title="' + escapeHtml(list.map(w => w.name).join(', ')) + '">+' + (list.length - 1) + '</span>'
+    : '';
+  return first + rest;
+}
+
 function completedRow(r) {
   const p = r.performance;
   const when = (p && p.postedAt) || r.completedAt || r.requestedAt;
@@ -1216,6 +1232,7 @@ function completedRow(r) {
     '<td style="width:44%">' + (link ? '<a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + body + '</a>' : body) + origin + '</td>' +
     '<td><span class="chip ' + typeColor(r.type) + '">' + escapeHtml(r.type) + '</span></td>' +
     '<td style="font-size:12px;color:var(--ink2)">' + escapeHtml(r.source === 'lineage' ? 'Self-started' : r.requestedBy) + '</td>' +
+    '<td style="font-size:12px;color:var(--ink2)">' + workedByCell(r.workedBy) + '</td>' +
     '<td style="font-size:12px;color:var(--ink2)">' + fmtDate(when) + '</td>' +
     nums +
   '</tr>';

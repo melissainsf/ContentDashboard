@@ -804,6 +804,183 @@ eq('undated work cannot be placed in a week', CD.completedSummary(
 eq('monthKey formats a two-digit month', CD.monthKey('2026-09-02T00:00:00Z'), '2026-09');
 ok('monthKey rejects a bad date', CD.monthKey('not a date') === null);
 
+// ── Post attribution and ICP ───────────────────────────────────
+//
+// Lineage post records carry no author, so "who worked this" is read off
+// each post's lifecycle feed and the ICP rate off a generated report. Both
+// live in the Netlify function; the pure parts of them are tested here.
+section('Post attribution and ICP');
+
+const LA = require('./netlify/functions/lineage-analytics.js');
+
+// Real event shapes from GET /api/drafts/{id}/events.
+const FEED = [
+  { id: '1', type: 'draft.created', at: '2026-08-06T05:20:30Z',
+    actor: { id: 'u1', first_name: 'Emmett', last_name: 'Chen-Ran', email: 'emmett+service@virio.ai' }, payload: {} },
+  { id: '2', type: 'draft.status_changed', at: '2026-08-07T06:37:57Z',
+    actor: { id: 'u2', first_name: 'Millie', last_name: 'Hanson', email: 'millie+service@virio.ai' }, payload: {} },
+  { id: '3', type: 'draft.scheduled', at: '2026-08-07T06:37:56Z',
+    actor: { id: 'u2', first_name: 'Millie', last_name: 'Hanson', email: 'millie+service@virio.ai' },
+    payload: { to_scheduled_at: '2026-08-07T16:00:00+00:00', from_scheduled_at: '2026-08-06T16:00:00+00:00' } },
+  { id: '4', type: 'draft.approved', at: '2026-08-07T07:00:00Z',
+    actor: { id: 'c1', first_name: 'Dana', last_name: 'Client', email: 'dana@customer.com' }, payload: {} },
+  { id: '5', type: 'draft.approval_history_archived', at: '2026-08-27T05:00:06Z', actor: null, payload: {} }
+];
+
+const workedRank = LA.rankWorkedBy(FEED);
+eq('only Virio people are named', workedRank.length, 2);
+eq('the most involved teammate ranks first', workedRank[0].name, 'Millie Hanson');
+eq('...with a count of what they did', workedRank[0].events, 2);
+eq('the client who approved is not one of ours', workedRank.filter(w => /customer/.test(w.email)).length, 0);
+ok('an event with no actor does not crash the ranking', LA.rankWorkedBy([{ id: 'x', type: 'draft.created', at: 'now', actor: null }]).length === 0);
+eq('a self-managed post names nobody', LA.rankWorkedBy([]).length, 0);
+
+// Nearly every teammate has two Lineage accounts — one in our own tenant and
+// a `+service` seat inside the client's — and a post carries events from both.
+const twoAccounts = LA.rankWorkedBy([
+  { id: '1', type: 'draft.created', at: '2026-08-28T17:00:00Z',
+    actor: { id: 'a', first_name: 'Maxwell', last_name: 'Zinkievich', email: 'maxwell@virio.ai' }, payload: {} },
+  { id: '2', type: 'draft.scheduled', at: '2026-08-28T17:51:14Z',
+    actor: { id: 'b', first_name: 'Maxwell', last_name: 'Zinkievich', email: 'maxwell+service@virio.ai' }, payload: {} },
+  { id: '3', type: 'draft.status_changed', at: '2026-08-28T18:00:00Z',
+    actor: { id: 'c', first_name: 'Emily', last_name: 'Chen', email: 'emily+service@virio.ai' }, payload: {} }
+]);
+eq('one person with two accounts is named once', twoAccounts.length, 2);
+eq('...and their work on both accounts is added up', twoAccounts[0].events, 2);
+eq('...under the plain address', twoAccounts[0].email, 'maxwell@virio.ai');
+eq('a second teammate is still separate', twoAccounts[1].name, 'Emily Chen');
+
+// The publish date is the join key to the ICP report, and it comes from the
+// latest schedule event rather than the first.
+eq('the latest schedule wins', LA.scheduledDate(FEED), '2026-08-07T16:00:00+00:00');
+ok('a post published without scheduling has no date', LA.scheduledDate([FEED[0]]) === null || LA.scheduledDate([FEED[0]]) === undefined);
+
+// ICP reports are per FOC and keyed by publish date, never by post id.
+const icpMerged = LA.mergeIcpReports([
+  { created_at: '2026-08-29T21:42:28Z', result_json: {
+      summary: { icp_engagement_rate: 0.1632 },
+      post_analysis: [
+        { posted_at: '2026-04-15', icp_rate: 0.029, topic: 'a' },
+        { posted_at: '2026-04-18', icp_rate: 0.11, topic: 'b' } ] } },
+  { created_at: '2026-08-20T10:00:00Z', result_json: {
+      summary: { icp_engagement_rate: 0.2 },
+      post_analysis: [
+        { posted_at: '2026-04-18', icp_rate: 0.4, topic: 'c' },
+        { posted_at: '2026-05-02', icp_rate: 0.07, topic: 'd' } ] } }
+]);
+eq('a date claimed by one post keeps its rate', icpMerged.byDate['2026-04-15'], 0.029);
+ok('a date two posts share is blanked rather than guessed', icpMerged.byDate['2026-04-18'] === null);
+eq('a second FOC report still contributes its own dates', icpMerged.byDate['2026-05-02'], 0.07);
+eq('the company-level rate comes from the newest report', icpMerged.summaryRate, 0.1632);
+eq('both reports counted', icpMerged.reportCount, 2);
+eq('no report means no dates', Object.keys(LA.mergeIcpReports([]).byDate).length, 0);
+
+// A post can be attributed before it has any engagement to show.
+const attributedOnly = CD.attachPerformance(
+  [{ id: 'x', postRefs: [{ postId: 'p1' }] }],
+  { p1: { measured: false, workedBy: [{ name: 'Millie Hanson', email: 'millie+service@virio.ai', events: 3 }] } });
+eq('an unpublished post still names who worked it', attributedOnly[0].workedBy[0].name, 'Millie Hanson');
+ok('...but reports no performance', attributedOnly[0].performance === null);
+
+const twoHands = CD.attachPerformance(
+  [{ id: 'x', postRefs: [{ postId: 'p1' }, { postId: 'p2' }] }],
+  { p1: { likes: 1, comments: 0, reposts: 0, measured: true,
+          workedBy: [{ name: 'Millie Hanson', email: 'millie+service@virio.ai', events: 3 }] },
+    p2: { likes: 1, comments: 0, reposts: 0, measured: true,
+          workedBy: [{ name: 'Millie Hanson', email: 'millie+service@virio.ai', events: 2 },
+                     { name: 'Max Zinkievich', email: 'maxwell+service@virio.ai', events: 4 }] } });
+eq('one request, two posts, three hands deduped to two people', twoHands[0].workedBy.length, 2);
+eq('the busiest across both posts leads', twoHands[0].workedBy[0].name, 'Millie Hanson');
+eq('...counting their work on every post in the request', twoHands[0].workedBy[0].events, 5);
+eq('performance carries the same list for the table', twoHands[0].performance.workedBy.length, 2);
+
+// ── The Lineage function, end to end ───────────────────────────
+//
+// Three upstream surfaces have to line up for one row: engagement counts,
+// the lifecycle feed, and the ICP report. Stub all three and check the
+// merge, including the case that used to blank the whole tab — the first
+// post in the batch being one that isn't published yet.
+section('The Lineage function, end to end');
+
+const COMPANY_IDS = require('./netlify/functions/lineage-company-ids.json');
+const SLUG = Object.keys(COMPANY_IDS)[0];
+const LIVE = 'aaaaaaaa-0000-4000-8000-000000000001';
+const UNPUBLISHED = 'bbbbbbbb-0000-4000-8000-000000000002';
+
+function stubUpstream() {
+  const json = (body) => ({ ok: true, status: 200, json: async () => body });
+  global.fetch = async (url) => {
+    if (url.includes('/analytics/' + LIVE)) {
+      return json({ draft_id: LIVE, likes: 93, comments: 6, shares: 2, synced_at: '2026-08-15T09:57:05Z' });
+    }
+    if (url.includes('/analytics/' + UNPUBLISHED)) {
+      // The route's own not-found body, which is how a right URL with no
+      // data is told apart from a wrong URL.
+      return { ok: false, status: 404, json: async () => ({ error: 'Analytics not found' }) };
+    }
+    if (url.includes('/drafts/' + LIVE + '/events')) {
+      return json({ events: [
+        { id: '1', type: 'draft.created', at: '2026-07-19T05:00:00Z',
+          actor: { id: 'u1', first_name: 'Millie', last_name: 'Hanson', email: 'millie+service@virio.ai' }, payload: {} },
+        { id: '2', type: 'draft.scheduled', at: '2026-07-20T05:00:00Z',
+          actor: { id: 'u1', first_name: 'Millie', last_name: 'Hanson', email: 'millie+service@virio.ai' },
+          payload: { to_scheduled_at: '2026-07-21T16:00:00+00:00' } },
+        { id: '3', type: 'draft.approved', at: '2026-07-20T06:00:00Z',
+          actor: { id: 'c1', first_name: 'Dana', last_name: 'Client', email: 'dana@customer.com' }, payload: {} } ] });
+    }
+    if (url.includes('/drafts/' + UNPUBLISHED + '/events')) {
+      return json({ events: [
+        { id: '9', type: 'draft.status_changed', at: '2026-07-22T05:00:00Z',
+          actor: { id: 'u2', first_name: 'Max', last_name: 'Zinkievich', email: 'maxwell+service@virio.ai' }, payload: {} } ] });
+    }
+    if (url.includes('/api/reports?')) {
+      return json({ reports: [
+        { id: 'r1', status: 'completed', user_id: 'foc1', created_at: '2026-08-29T21:00:00Z' },
+        { id: 'r0', status: 'completed', user_id: 'foc1', created_at: '2026-07-01T21:00:00Z' } ], total: 2 });
+    }
+    if (url.includes('/api/reports/r1')) {
+      return json({ report: { id: 'r1', created_at: '2026-08-29T21:00:00Z', result_json: {
+        summary: { icp_engagement_rate: 0.1632 },
+        post_analysis: [ { posted_at: '2026-07-21', icp_rate: 0.345, topic: 'x' } ] } } });
+    }
+    throw new Error('unstubbed upstream call: ' + url);
+  };
+}
+
+async function runFunction(order) {
+  stubUpstream();
+  process.env.LINEAGE_API_KEY = 'jq_live_test';
+  const res = await LA.handler({
+    httpMethod: 'POST',
+    body: JSON.stringify({ posts: order.map(postId => ({ company: SLUG, postId })) })
+  });
+  return JSON.parse(res.body);
+}
+
+runFunction([LIVE, UNPUBLISHED]).then(async out => {
+  const live = out.analytics[LIVE];
+  eq('engagement comes back for the published post', live.likes, 93);
+  eq('the teammate who worked it is named', live.workedBy[0].name, 'Millie Hanson');
+  eq('the client who approved is not counted as ours', live.workedBy.length, 1);
+  eq('the schedule supplies the publish date the analytics route omits', String(live.postedAt).slice(0, 10), '2026-07-21');
+  eq('the ICP report is matched on that date and rendered as a percentage', live.icpRate, 34.5);
+
+  const dark = out.analytics[UNPUBLISHED];
+  eq('an unpublished post is still attributed', dark.workedBy[0].name, 'Max Zinkievich');
+  ok('...but is not counted as measured', dark.measured === false);
+  eq('only the published post counts toward "measured"', out.matched, 1);
+  eq('both posts count toward attribution', out.attributed, 2);
+
+  // Regression: probing the analytics URL against an unpublished post used
+  // to look identical to a wrong URL, so the tab reported itself broken.
+  const reversed = await runFunction([UNPUBLISHED, LIVE]);
+  ok('an unpublished post first in the batch does not disconnect the tab', reversed.configured === true);
+  eq('...and the published post is still measured', reversed.matched, 1);
+
+  console.log('\n' + (failed === 0 ? '\u2713 ' : '\u2717 ') + passed + ' passed, ' + failed + ' failed');
+  process.exit(failed === 0 ? 0 : 1);
+});
+
 // ── Summary ────────────────────────────────────────────────────
-console.log('\n' + (failed === 0 ? '✓ ' : '✗ ') + passed + ' passed, ' + failed + ' failed');
-process.exit(failed === 0 ? 0 : 1);
+// Printed by the async section above, once the stubbed function calls have
+// settled — otherwise the count would be reported before they ran.

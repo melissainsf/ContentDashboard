@@ -362,19 +362,40 @@ written anywhere else; HubSpot, Slack and Lineage are read-only.
 
 Run the tests with `npm test` (no dependencies).
 
+### Running it locally
+
+The page is static, but the four `/api/*` routes are Netlify functions that
+need the site's environment variables (`LINEAGE_API_KEY`, `SLACK_BOT_TOKEN`,
+`HUBSPOT_TOKEN`). The Netlify CLI injects them from the deployed site, so
+there is no `.env` to keep in sync:
+
+```
+npx netlify-cli login     # opens a browser, once per machine
+npx netlify-cli link      # pick the Content Dashboard site, once per clone
+npm run dev               # serves the page and the functions on :8888
+```
+
+`npm run env` lists what the linked site has set, which is the quickest way
+to check whether a variable is missing rather than wrong.
+
 ---
 
 ## Known limits
 
-- **The Lineage activity REST path is unconfirmed**, the same way the
-  analytics one is. The log's format is known and parsed against real
-  lines from it, and a payload that is not an activity log is rejected
-  rather than reported as "no drafts" — but the function has to guess
-  the path until `LINEAGE_ACTIVITY_URL` is set.
-- The Lineage analytics REST path is unconfirmed, and the surface used
-  at build time did not return ICP rate — see `LINEAGE_POST_ANALYTICS_URL`
-  above. Everything for ICP rate is wired and tested; it needs the right
-  endpoint.
+- **The Lineage activity REST path is unconfirmed.** The log's format is
+  known and parsed against real lines from it, and a payload that is not an
+  activity log is rejected rather than reported as "no drafts" — but the
+  function has to guess the path until `LINEAGE_ACTIVITY_URL` is set. The
+  per-post feed at `/api/drafts/{postId}/events`, which "Worked by" uses, is
+  confirmed but does not answer this question: it is keyed by post, and this
+  feature needs one author's drafts across a company.
+- ICP rate is blank for some posts by design: it comes from a generated
+  report keyed by publish date, so a day with two posts, a client with no
+  report, and a post that was never scheduled all render `—` rather than a
+  guessed number. See `docs/lineage-post-analytics.md`.
+- "Worked by" names whoever moved a post through review, approval,
+  scheduling and publishing. Editing a draft is not recorded in the feed
+  Lineage exposes, so a post someone only rewrote shows nobody.
 - A prose request naming **two** clients with no links attaches to one of
   them; the other is visible in the text but not counted separately.
 - Thread replies are treated as conversation, not as new requests.

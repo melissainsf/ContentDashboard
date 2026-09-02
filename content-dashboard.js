@@ -963,9 +963,24 @@
       const refs = r.postRefs || [];
       let likes = 0, comments = 0, reposts = 0, measured = 0, syncedAt = null;
       let icpSum = 0, icpCount = 0, postedAt = null;
+      // Who on our side worked the posts behind this request, most involved
+      // first. Lineage has no author on a post record, so this comes from
+      // the posts' lifecycle feeds — see netlify/functions/lineage-analytics.js.
+      const workedBy = [];
+      const workedSeen = {};
       refs.forEach(ref => {
         const a = map[ref.postId];
         if (!a) return;
+        (a.workedBy || []).forEach(w => {
+          const k = w.email || w.name;
+          if (!k) return;
+          if (workedSeen[k]) { workedSeen[k].events += w.events || 0; return; }
+          workedSeen[k] = { name: w.name, email: w.email, events: w.events || 0 };
+          workedBy.push(workedSeen[k]);
+        });
+        // A post can be attributed before it is published, so engagement is
+        // only counted for the posts that actually came back with numbers.
+        if (a.measured === false) return;
         measured++;
         likes += a.likes || 0;
         comments += a.comments || 0;
@@ -977,13 +992,15 @@
         if (a.syncedAt && (!syncedAt || new Date(a.syncedAt) > new Date(syncedAt))) syncedAt = a.syncedAt;
         if (a.postedAt && (!postedAt || new Date(a.postedAt) > new Date(postedAt))) postedAt = a.postedAt;
       });
+      workedBy.sort((a, b) => b.events - a.events || String(a.name).localeCompare(String(b.name)));
       return Object.assign({}, r, {
+        workedBy,
         performance: measured
           ? {
               likes, comments, reposts,
               engagement: likes + comments + reposts,
               icpRate: icpCount ? Math.round((icpSum / icpCount) * 10) / 10 : null,
-              measured, posts: refs.length, syncedAt, postedAt
+              measured, posts: refs.length, syncedAt, postedAt, workedBy
             }
           : null
       });

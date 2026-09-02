@@ -3,6 +3,15 @@
 # Two data sources, both owned by this site: HubSpot for the client book,
 # Slack for the request feed. Nothing else.
 
+# Both paths were implicit before and resolve to the same places on deploy.
+# They are written down because `netlify dev` needs them to serve the root
+# page and the functions together.
+[build]
+  publish = "."
+
+[functions]
+  directory = "netlify/functions"
+
 [[redirects]]
   from = "/api/accounts"
   to = "/.netlify/functions/accounts"
