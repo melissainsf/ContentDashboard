@@ -67,6 +67,8 @@ main{padding:24px 32px 60px;max-width:1560px;margin:0 auto}
 .section-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .section-title{font-family:'Syne',sans-serif;font-size:14px;font-weight:600;letter-spacing:0.02em}
 .section-sub{font-size:12px;color:var(--ink2);margin-top:2px;font-weight:400;font-family:'DM Sans',sans-serif;letter-spacing:0}
+#completed-window{color:var(--ink);font-weight:600}
+#completed-window:not(:empty){margin-left:4px}
 .section-body{padding:18px}
 .section-body.flush{padding:0}
 /* TOOLBAR */
@@ -222,7 +224,8 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
       <div class="section-head">
         <div>
           <div class="section-title">Completed</div>
-          <div class="section-sub">Posts Millie has finished, newest customer first, with how they did on LinkedIn.</div>
+          <div class="section-sub">Posts Millie has finished, newest customer first, with how they did on LinkedIn.
+            <span id="completed-window"></span></div>
         </div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <span class="chip grey" id="completed-synced">—</span>
@@ -403,6 +406,12 @@ let charts = {};
 let analytics = {};      // Lineage engagement, keyed by post id
 let lineageNote = null;
 let lineageConfigured = false;
+let lineageDrafts = [];   // draft.* events Millie is the actor on, from Lineage
+let draftsNote = null;
+let draftsConfigured = false;
+let draftsSource = null;    // 'live' | 'snapshot' | 'none'
+let draftsSince = null;     // ISO date floor the feed applied
+let draftsCapturedAt = null;
 let lastGoodRefresh = null;
 
 const qState = { search: '', client: '', requester: '', type: '' };
@@ -527,6 +536,10 @@ async function loadAll() {
     }
 
     rebuild();
+    // Needs the Slack-derived post slugs from that first rebuild, so it
+    // runs after it and rebuilds again with what it finds.
+    await loadLineageDrafts();
+    rebuild();
     await loadPerformance();
     lastGoodRefresh = new Date();
     clearStale();
@@ -543,7 +556,7 @@ async function loadAll() {
 // Re-derive everything from the raw inputs. Called after a load and after
 // every state write, so the screen never drifts from the store.
 function rebuild() {
-  const built = CD.buildRequests(messages, overrides, accounts, { ownerIds });
+  const built = CD.buildRequests(messages, overrides, accounts, { ownerIds, lineageDrafts });
   requests = CD.attachPerformance(CD.prioritise(built, accounts, {}), analytics);
   populateFilters();
   renderQueue();
@@ -908,6 +921,75 @@ function drawChart(id, cfg) {
   charts[id] = new Chart(el.getContext('2d'), cfg);
 }
 
+// ── LINEAGE DRAFTS ──────────────────────────────────────────────
+// Work Millie started herself, which by definition never appeared in
+// #content-support. Fetched before the queue is built, because these
+// drafts become completed rows alongside the Slack-sourced ones.
+
+// Lineage keys its workspaces by slug. HubSpot only has the display
+// name, and the two line up under the same slugify rule Lineage uses
+// ("Hume AI" -> "hume-ai", "Highwire (Knopman)" -> "highwire-knopman").
+// Slugs already seen in Slack post links are real rather than derived,
+// so they go in too.
+function lineageSlugsToScan() {
+  const out = {};
+  accounts.forEach(a => {
+    const slug = String(a.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (slug) out[slug] = true;
+  });
+  requests.forEach(r => (r.postRefs || []).forEach(ref => { if (ref.company) out[ref.company] = true; }));
+  return Object.keys(out);
+}
+
+async function loadLineageDrafts() {
+  const companies = lineageSlugsToScan();
+  if (!companies.length) { lineageDrafts = []; draftsConfigured = true; draftsNote = null; return; }
+
+  try {
+    const res = await fetch('/api/lineage-drafts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companies })
+    });
+    if (!res.ok) throw new Error('Lineage drafts ' + res.status);
+    const data = await res.json();
+    lineageDrafts = data.drafts || [];
+    draftsConfigured = !!data.configured;
+    draftsNote = data.note || null;
+    draftsSource = data.source || null;
+    draftsSince = data.since || null;
+    draftsCapturedAt = data.capturedAt || null;
+  } catch (e) {
+    // Millie's own drafts are an addition to the queue, never a
+    // precondition for it. An empty list here is reported as "not
+    // connected", never as "she wrote nothing".
+    lineageDrafts = [];
+    draftsConfigured = false;
+    draftsSource = 'none';
+    draftsNote = e.message;
+  }
+}
+
+function monthName(key) {
+  if (!key) return 'This month';
+  const d = new Date(key + '-01T00:00:00');
+  return isNaN(d) ? key : d.toLocaleDateString('en-GB', { month: 'long' });
+}
+
+function shortDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  return isNaN(d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+// "1 August 2026" reads better than an ISO date in a sentence.
+function prettyDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.length === 10 ? iso + 'T00:00:00Z' : iso);
+  return isNaN(d) ? iso : d.toLocaleDateString('en-GB',
+    { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
 // ── PERFORMANCE ─────────────────────────────────────────────────
 // Fetched after the queue is built, because the post ids come out of
 // parsing the Slack requests.
@@ -1020,20 +1102,61 @@ function renderCompleted() {
   const perf = CD.performanceSummary(requests, { topN: 0 });
   const measuredOnly = document.getElementById('completed-measured-only').checked;
 
+  // Two separate Lineage feeds land in this widget — the drafts Millie
+  // wrote and the LinkedIn numbers on them — and they fail
+  // independently. Reporting them as one "Lineage is down" would hide
+  // which half is actually missing.
   const banner = document.getElementById('completed-banner');
+  const problems = [];
+  const infos = [];
+  if (!draftsConfigured) {
+    problems.push('<b>Work done in Lineage is not being counted.</b> ' + escapeHtml(draftsNote || '') +
+      '<br>Only work requested in <code>#content-support</code> is listed below.');
+  } else if (draftsSource === 'snapshot') {
+    infos.push('<b>Lineage work is a snapshot, not live.</b> Read from Lineage\'s activity log on ' +
+      escapeHtml(prettyDate(draftsCapturedAt)) + ' and shipped with the page, because the live endpoint is not ' +
+      'configured yet. It is a floor: ten accounts\' logs stop before ' + escapeHtml(prettyDate(draftsSince)) +
+      ', so work there is real and uncounted.');
+  }
   if (!lineageConfigured) {
+    problems.push('<b>Post performance is not connected.</b> ' + escapeHtml(lineageNote || '') +
+      '<br>Completed work is still listed; only the LinkedIn numbers are missing.');
+  }
+  if (problems.length) {
     banner.className = 'banner warn';
-    banner.innerHTML = '<div><b>Post performance is not connected.</b> ' + escapeHtml(lineageNote || '') +
-      '<br>Completed work is still listed below; only the LinkedIn numbers are missing.</div>';
-  } else if (lineageNote) {
+    banner.innerHTML = '<div>' + problems.join('<br><br>') + '</div>';
+  } else if (infos.length || lineageNote) {
     banner.className = 'banner info';
-    banner.innerHTML = '<div>' + escapeHtml(lineageNote) + '</div>';
+    banner.innerHTML = '<div>' + infos.concat(lineageNote ? [escapeHtml(lineageNote)] : []).join('<br><br>') + '</div>';
   } else {
     banner.className = 'banner info hidden';
   }
 
+  // The window this widget counts over, stated where it is read.
+  set('completed-window', draftsSince
+    ? 'Lineage work counted from ' + prettyDate(draftsSince) + ' onward.'
+    : '');
+
+  const done = requests.filter(r => r.status === 'done');
+  const fromLineage = done.filter(r => r.source === 'lineage').length;
+  const vol = CD.completedSummary(requests, {});
+
+  // Volume first, left to right — everything, this month, this week, the
+  // rate — then where it came from, then how it landed. Reading order is
+  // the story: how much, how recently, how consistently.
   document.getElementById('completed-kpis').innerHTML = [
-    kpi('Completed', requests.filter(r => r.status === 'done').length, 'requests finished'),
+    kpi('Completed', vol.total, 'items finished'),
+    kpi('This month', vol.month, monthName(vol.monthKey) + ' so far'),
+    kpi('This week', vol.week, 'week of ' + shortDate(vol.weekStart)),
+    kpi('Avg / week', vol.avgPerWeek == null ? '—' : vol.avgPerWeek,
+        vol.weeksMeasured
+          ? 'over ' + vol.weeksMeasured + ' completed week' + (vol.weeksMeasured === 1 ? '' : 's')
+          : 'no completed weeks yet'),
+    kpi('Worked in Lineage', draftsConfigured ? fromLineage : '—',
+        draftsConfigured
+          ? 'drafts she moved since ' + prettyDate(draftsSince)
+          : 'feed not connected',
+        draftsConfigured ? '' : 'alert'),
     kpi('Reactions', perf.likes, 'across measured posts'),
     kpi('Comments', perf.comments, 'the signal worth reading'),
     kpi('Reposts', perf.reposts, 'shared onward'),
@@ -1085,10 +1208,14 @@ function completedRow(r) {
     : '<td class="num" colspan="4"><span class="chip grey">' +
       ((r.postRefs || []).length ? 'Awaiting LinkedIn data' : 'No post linked') + '</span></td>';
 
+  const origin = r.source === 'lineage'
+    ? ' <span class="chip teal" title="Millie worked this draft in Lineage — wrote, edited, reviewed or scheduled it — and nobody asked for it in #content-support">Lineage</span>'
+    : '';
+
   return '<tr>' +
-    '<td style="width:44%">' + (link ? '<a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + body + '</a>' : body) + '</td>' +
+    '<td style="width:44%">' + (link ? '<a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">' + body + '</a>' : body) + origin + '</td>' +
     '<td><span class="chip ' + typeColor(r.type) + '">' + escapeHtml(r.type) + '</span></td>' +
-    '<td style="font-size:12px;color:var(--ink2)">' + escapeHtml(r.requestedBy) + '</td>' +
+    '<td style="font-size:12px;color:var(--ink2)">' + escapeHtml(r.source === 'lineage' ? 'Self-started' : r.requestedBy) + '</td>' +
     '<td style="font-size:12px;color:var(--ink2)">' + fmtDate(when) + '</td>' +
     nums +
   '</tr>';

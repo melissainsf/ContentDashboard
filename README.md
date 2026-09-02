@@ -31,7 +31,7 @@ dashboard.
 | --- | --- |
 | **HubSpot** | The client book — MRR, Account Manager, Content Engineer, Content Health Score, CSM Sentiment, contracted posts/month, products |
 | **Slack `#content-support`** | The requests themselves — "Millie will you write an ABM post for my customer X" |
-| **Lineage** | Reactions, comments, reposts and ICP rate on the posts Millie writes |
+| **Lineage** | The drafts Millie writes herself, plus reactions, comments, reposts and ICP rate on the posts that come out of this queue |
 
 ---
 
@@ -138,7 +138,17 @@ reposts, ICP rate.**
 It shows up in two places:
 
 - **Completed** — a widget at the bottom of the Queue, grouped by customer
-  and ordered by how recent the work is. This is "what did I finish, and
+  and ordered by how recent the work is. It leads with volume: everything
+  finished, this calendar month, this week, and an average per week.
+
+  Weeks are **Monday-start** and the average **excludes the partial current
+  week**, both matching `weekKey` and the Capacity tab, so the two views
+  cannot drift apart. With no closed week yet the average reads `—`, never
+  `0`, which would say she delivers nothing. The tiles count **items** —
+  the same unit as the rows underneath — rather than summing multi-post
+  asks; pieces-of-content volume lives on the Capacity tab, and a tile
+  that disagreed with the list below it would send a reader hunting for
+  work that was never missing. This is "what did I finish, and
   how did it land". Recency uses the post's publish time where there is
   one, because that is when the work actually reached an audience.
 - **Post Performance** — its own tab: every measured post ranked by
@@ -147,6 +157,95 @@ It shows up in two places:
 Completed work with no LinkedIn data still appears in both — it is work
 Millie did, and hiding it would make the record read as though less was
 delivered than actually was. It is marked *awaiting data*, never zero.
+
+### Work Millie starts herself
+
+The queue only ever knew about work somebody asked for. Millie in
+`#content-support` on 2026-07-15: *"please drop some requests in!
+Otherwise I will be spending time looking at everyones accounts."*
+Everything in that second category was invisible here, so the Completed
+bucket read as though she had delivered less than she had.
+
+Lineage post records carry **no author** — the only person on a post is
+the client who publishes it. But Lineage's per-company **activity log**
+stamps an actor id on every draft event, which is real per-post
+attribution. `netlify/functions/lineage-drafts.js` reads that log and
+returns the drafts created by one author; each becomes a completed row
+tagged `Lineage`, because for Millie the draft *is* the deliverable —
+the AM and the client take it from there.
+
+A post that was both asked for in Slack **and** written in Lineage is
+one piece of work: the Slack request wins and the Lineage event is
+dropped, so the week's volume is not inflated by counting it twice.
+
+The row ids are stable (`lineage:<post-uuid>`), so ticking one back to
+another status in the dashboard sticks across refreshes exactly as it
+does for a Slack request.
+
+**Every `draft.*` event counts by default, deduped to one row per
+draft.** Counting only `draft.created` would be badly wrong. Measured
+across all 46 accounts over 2026-07-08 → 09-02, Millie **created 1
+draft and worked 45**: she rarely starts a post from scratch any more,
+she takes one the ghostwriter or an AM made and moves it through review
+and scheduling. Her recent events break down as 50
+`draft.status_changed`, 30 `draft.scheduled`, 12
+`rescheduled`/`unscheduled`, 3 `draft.updated`, 1 `draft.created`.
+Set `LINEAGE_ACTIVITY_EVENTS` to narrow it only if you specifically
+want authorship rather than work done.
+
+Her footprint is concentrated on accounts that rarely appear in
+`#content-support` — Percents, Watt Data, Sybill, Fergana Labs,
+InnovoCommerce, Concord Visa — which is exactly the work the Slack
+queue could never see.
+
+**The window starts 1 August 2026** — a fixed floor, set by
+`LINEAGE_ACTIVITY_SINCE`, not a rolling window, so the early weeks do not
+quietly drop out of the total as time passes. It is stated on the
+Completed card itself. `LINEAGE_ACTIVITY_DAYS` is used only if
+`LINEAGE_ACTIVITY_SINCE` is set to empty. This floor applies to the
+Lineage feed only; Slack-sourced requests keep their full history.
+
+**A scheduled job refreshes the snapshot every morning.** It reads each
+company's activity log through the Lineage MCP workspace, writes them to
+a directory as `<company-slug>.jsonl`, and runs
+
+```
+node tools/build-lineage-snapshot.js <logsDir> 2026-08-01
+```
+
+which applies exactly the rule `lineage-drafts.js` applies to live data —
+the author's `draft.*` events, one entry per draft, dated by her most
+recent touch — so the snapshot and the live feed can never disagree about
+what a draft is. The script is a no-op when the result is unchanged, so a
+quiet day produces no commit and no deploy. A push to `main` redeploys
+the site automatically.
+
+The job does **not** refresh Slack or HubSpot: both are already read live
+on every page load and need nothing scheduled.
+
+**Until the endpoint is live, a snapshot ships with the page.**
+`netlify/functions/_lineage-snapshot.js` holds the 20 drafts Millie
+worked from 1 August, read from Lineage's activity logs on 2026-09-02.
+The function serves it **only** when the live endpoint cannot be reached,
+always marks the response `source: "snapshot"` with the capture date, and
+the dashboard says so on screen. It exists because an empty list here
+silently reports the Slack queue alone and reads as though she had done a
+fraction of her actual work. Point `LINEAGE_ACTIVITY_URL` at the real
+path and live data wins; delete the file then.
+
+**The count is a floor, not a total.** A busy account's activity log is
+capped at roughly 2,000 events and keeps the *oldest*, so recent work on
+the busiest accounts falls outside it. Netlify's log stops at
+2026-07-01, Axya's at 07-03, Trimble's at 07-12 — a forced VFS refresh
+does not extend them. Any account whose window ends before today is
+under-reported here, and there is no way around it from this API.
+
+The August floor makes this bite harder, not softer: **ten of the
+twenty-one readable accounts have logs that stop before 1 August**,
+including Sybill and Watt Data, her two busiest accounts in July. They
+contribute nothing to the August count even though the work is real. A
+paginated or date-filtered activity endpoint is the only fix, and it is
+worth asking Lineage engineering for alongside the two URLs.
 
 ### What is not shown, and why
 
@@ -188,6 +287,10 @@ The channel is private, so a Slack app must be created and invited.
 | `SLACK_BOT_TOKEN` | **yes** | No live requests; manual entry still works |
 | `LINEAGE_API_KEY` | for performance | Post Performance tab says it is not connected |
 | `LINEAGE_POST_ANALYTICS_URL` | no | Defaults to the real endpoint, see below |
+| `LINEAGE_ACTIVITY_URL` | for self-started drafts | Falls back to guessing the path; Completed shows a banner |
+| `LINEAGE_AUTHOR_ID` | no | Defaults to Millie Hanson's Lineage user id |
+| `LINEAGE_ACTIVITY_EVENTS` | no | Defaults to `draft.created` |
+| `LINEAGE_ACTIVITY_DAYS` | no | Defaults to `120` |
 | `SLACK_CONTENT_CHANNEL_ID` | no | Defaults to `C0BFY7Y3MK7` (`#content-support`) |
 | `SLACK_CONTENT_OWNER_IDS` | no | Defaults to `U0A2VGT6NRL` (Millie) |
 | `SLACK_CONTENT_DAYS` | no | Defaults to `120` |
@@ -250,11 +353,12 @@ written anywhere else; HubSpot, Slack and Lineage are read-only.
 | --- | --- |
 | `index.html` | The page |
 | `content-dashboard.js` | Parsing, scoring, capacity and performance maths — pure, no DOM |
-| `content-dashboard.test.js` | 210 tests, fixtures taken from real channel messages and real Lineage numbers |
+| `content-dashboard.test.js` | 242 tests, fixtures taken from real channel messages, real Lineage activity-log lines and real Lineage numbers |
 | `netlify/functions/accounts.js` | The client book from HubSpot |
 | `netlify/functions/content-requests.js` | Reads Slack history + stored state |
 | `netlify/functions/content-request-write.js` | Writes per-request state |
 | `netlify/functions/lineage-analytics.js` | Reactions, comments, reposts, ICP rate per post |
+| `netlify/functions/lineage-drafts.js` | The drafts Millie wrote in Lineage, from its activity log |
 
 Run the tests with `npm test` (no dependencies).
 
@@ -262,6 +366,11 @@ Run the tests with `npm test` (no dependencies).
 
 ## Known limits
 
+- **The Lineage activity REST path is unconfirmed**, the same way the
+  analytics one is. The log's format is known and parsed against real
+  lines from it, and a payload that is not an activity log is rejected
+  rather than reported as "no drafts" — but the function has to guess
+  the path until `LINEAGE_ACTIVITY_URL` is set.
 - The Lineage analytics REST path is unconfirmed, and the surface used
   at build time did not return ICP rate — see `LINEAGE_POST_ANALYTICS_URL`
   above. Everything for ICP rate is wired and tested; it needs the right

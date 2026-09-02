@@ -22,3 +22,8 @@
   from = "/api/lineage-analytics"
   to = "/.netlify/functions/lineage-analytics"
   status = 200
+
+[[redirects]]
+  from = "/api/lineage-drafts"
+  to = "/.netlify/functions/lineage-drafts"
+  status = 200

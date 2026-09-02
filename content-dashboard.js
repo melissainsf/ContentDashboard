@@ -726,6 +726,12 @@
     return d.toISOString().slice(0, 10);
   }
 
+  function monthKey(dateish) {
+    const d = new Date(dateish);
+    if (isNaN(d)) return null;
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
   function addWeeks(key, n) {
     const d = new Date(key + 'T00:00:00');
     d.setDate(d.getDate() + n * 7);
@@ -797,6 +803,59 @@
   }
 
   function round1(n) { return Math.round(n * 10) / 10; }
+
+  /**
+   * Headline volume for the Completed widget: everything finished, this
+   * calendar month, this week, and a weekly average.
+   *
+   * Counts ITEMS, the same unit as the list underneath — one row per
+   * request or per Lineage draft. It deliberately does not sum `posts`:
+   * a tile that disagreed with the rows below it would send whoever is
+   * reading it hunting for the missing work. The Capacity tab is where
+   * pieces-of-content volume lives.
+   *
+   * "When it landed" is `completedAt || requestedAt`, matching
+   * weeklyVolume, so this average and the Capacity tab's cannot drift
+   * apart. For a Lineage-sourced row that is Millie's most recent touch
+   * on the draft.
+   */
+  function completedSummary(requests, opts) {
+    const o = opts || {};
+    const now = o.now ? new Date(o.now) : new Date();
+    const done = (requests || []).filter(r => r.status === 'done');
+
+    const thisMonth = monthKey(now);
+    const thisWeek = weekKey(now);
+
+    let month = 0, week = 0;
+    const byWeek = {};
+    done.forEach(r => {
+      const at = r.completedAt || r.requestedAt;
+      if (!at) return;
+      const wk = weekKey(at);
+      if (monthKey(at) === thisMonth) month++;
+      if (wk === thisWeek) week++;
+      byWeek[wk] = (byWeek[wk] || 0) + 1;
+    });
+
+    // The current week is partial. Averaging it in would drag the number
+    // down and understate what Millie actually delivers — the same rule
+    // capacitySummary applies, for the same reason.
+    const closed = Object.keys(byWeek).filter(k => k !== thisWeek);
+    const avgPerWeek = closed.length
+      ? round1(closed.reduce((a, k) => a + byWeek[k], 0) / closed.length)
+      : null;
+
+    return {
+      total: done.length,
+      month: month,
+      week: week,
+      avgPerWeek: avgPerWeek,
+      weeksMeasured: closed.length,
+      monthKey: thisMonth,
+      weekStart: thisWeek
+    };
+  }
 
   /**
    * Per-account coverage: who is getting Millie's time, who is starved,
@@ -1065,6 +1124,69 @@
     return null;
   }
 
+  // ── Lineage-authored drafts ───────────────────────────────────
+
+  /**
+   * Millie's own drafts, straight from Lineage's activity log.
+   *
+   * The queue only ever sees work somebody asked for in
+   * #content-support. Millie's own words there on 2026-07-15: "please
+   * drop some requests in! Otherwise I will be spending time looking at
+   * everyones accounts" — so the unasked-for half of her output was
+   * invisible to this dashboard, and the Completed bucket read as
+   * though she had delivered less than she had.
+   *
+   * Lineage stamps an actor id on every draft event, so a draft she
+   * creates is attributable without anyone tagging anything. Each one
+   * becomes a completed item, because for Millie the draft IS the
+   * deliverable — the AM and the client take it from there.
+   *
+   * Events arrive already filtered to her actor id by
+   * /api/lineage-drafts; this function only reshapes them. It is
+   * deliberately tolerant about field names because the activity log
+   * is an internal Lineage surface, not a contract.
+   */
+  function lineageDraftsToRequests(events, opts) {
+    const o = opts || {};
+    const seen = {};
+    const out = [];
+    (events || []).forEach(e => {
+      if (!e) return;
+      const postId = String(e.postId || e.entity_id || e.draft_id || '').toLowerCase();
+      const slug = String(e.company || e.companySlug || '').toLowerCase();
+      const at = e.ts || e.at || e.created_at || null;
+      // Without a post id there is nothing stable to key on, and a row
+      // that cannot be deduped would double-count on the next refresh.
+      if (!postId || seen[postId]) return;
+      seen[postId] = true;
+      out.push({
+        id: 'lineage:' + postId,
+        ts: null,
+        source: 'lineage',
+        permalink: slug ? 'https://app.virio.ai/lineage/' + slug + '/' + postId : null,
+        requestedBy: o.authorName || 'Millie',
+        requestedAt: at,
+        client: null,
+        clientSlug: slug || null,
+        links: slug ? ['https://app.virio.ai/lineage/' + slug + '/' + postId] : [],
+        postRefs: slug ? [{ company: slug, postId: postId }] : [],
+        dueAt: null,
+        dueRaw: '',
+        asap: false,
+        requesterPriority: null,
+        type: 'Post',
+        posts: 1,
+        notes: '',
+        text: e.title || 'Draft written in Lineage',
+        // Nobody ticks these: writing the draft is the completion, and
+        // the activity log only records it once it exists.
+        slackStatus: 'done',
+        threadReplies: 0
+      });
+    });
+    return out;
+  }
+
   /**
    * Full pipeline: raw Slack messages + stored overrides + accounts →
    * the request list the dashboard renders.
@@ -1084,6 +1206,17 @@
     });
     const parsed = [];
     (messages || []).forEach(m => { parseMessage(m, o).forEach(r => parsed.push(r)); });
+
+    // Drafts Millie wrote in Lineage. A post that was ALSO asked for in
+    // Slack is already represented by that request — adding it again
+    // would show one piece of work twice and inflate the week's volume —
+    // so the Slack row wins and the Lineage event is dropped.
+    const askedFor = {};
+    parsed.forEach(r => (r.postRefs || []).forEach(ref => { askedFor[ref.postId] = true; }));
+    lineageDraftsToRequests(o.lineageDrafts, o).forEach(r => {
+      if (r.postRefs.some(ref => askedFor[ref.postId])) return;
+      parsed.push(r);
+    });
 
     // Manually-added requests live only in the override store.
     Object.keys(ov).forEach(id => {
@@ -1210,6 +1343,7 @@
     workingDaysBetween,
     daysBetween,
     weekKey,
+    monthKey,
     leadTime,
     leadTimeSummary,
     scoreRequest,
@@ -1220,11 +1354,13 @@
     coverageByAccount,
     normalizeName,
     matchAccount,
+    lineageDraftsToRequests,
     buildRequests,
     prioritise,
     attachPerformance,
     performanceSummary,
     completedByAccount,
+    completedSummary,
     fmtMrr
   };
 });
