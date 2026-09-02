@@ -754,6 +754,56 @@ eq('events before the floor are dropped',
 eq('events on or after it are kept',
   parseLog(LOG_LINES, 'sourcera', LINEAGE_MILLIE, [], new Date('2026-08-01T00:00:00Z')).length, 2);
 
+// ── Completed volume: month, week, average ─────────────────────
+section('Completed volume');
+
+// Monday-start weeks, matching weekKey and the Capacity tab. 2026-09-02
+// is a Wednesday, so its week began Monday 2026-08-31.
+const VOL_NOW = new Date('2026-09-02T12:00:00Z');
+const volReqs = [
+  { id: 'a', status: 'done', completedAt: '2026-09-02T09:00:00Z' },   // this week, this month
+  { id: 'b', status: 'done', completedAt: '2026-08-31T09:00:00Z' },   // this week, LAST month
+  { id: 'c', status: 'done', completedAt: '2026-08-27T09:00:00Z' },   // last week
+  { id: 'd', status: 'done', completedAt: '2026-08-26T09:00:00Z' },   // last week
+  { id: 'e', status: 'done', completedAt: '2026-08-18T09:00:00Z' },   // week before
+  { id: 'f', status: 'accepted', completedAt: '2026-09-01T09:00:00Z' } // not done: never counted
+];
+const vol = CD.completedSummary(volReqs, { now: VOL_NOW });
+
+eq('total counts every finished item', vol.total, 5);
+eq('unfinished work is excluded', volReqs.length - vol.total, 1);
+eq('this month is the calendar month, not 30 days', vol.month, 1);
+eq('this week is Monday-start, so it spans the month boundary', vol.week, 2);
+eq('the week starts on the Monday', vol.weekStart, '2026-08-31');
+eq('the month key is the current one', vol.monthKey, '2026-09');
+
+// The partial current week is excluded from the average, the same rule
+// capacitySummary applies — including it would understate her rate.
+eq('two completed weeks are measured', vol.weeksMeasured, 2);
+eq('average is over closed weeks only', vol.avgPerWeek, 1.5);
+
+// A Lineage row carries its date on requestedAt, not completedAt.
+const lin = CD.completedSummary([
+  { id: 'x', status: 'done', source: 'lineage', completedAt: null, requestedAt: '2026-09-01T10:00:00Z' }
+], { now: VOL_NOW });
+eq('a Lineage draft counts in the week it was last touched', lin.week, 1);
+eq('and in the month', lin.month, 1);
+
+// Everything in the current week means nothing closed to average over —
+// reported as null, never as zero, which would read as "she delivers 0".
+const onlyThisWeek = CD.completedSummary([
+  { id: 'y', status: 'done', completedAt: '2026-09-02T09:00:00Z' }
+], { now: VOL_NOW });
+eq('no closed weeks yet', onlyThisWeek.weeksMeasured, 0);
+ok('average is null rather than zero', onlyThisWeek.avgPerWeek === null);
+
+eq('nothing finished is a clean zero', CD.completedSummary([], { now: VOL_NOW }).total, 0);
+eq('undated work cannot be placed in a week', CD.completedSummary(
+  [{ id: 'z', status: 'done', completedAt: null, requestedAt: null }], { now: VOL_NOW }).week, 0);
+
+eq('monthKey formats a two-digit month', CD.monthKey('2026-09-02T00:00:00Z'), '2026-09');
+ok('monthKey rejects a bad date', CD.monthKey('not a date') === null);
+
 // ── Summary ────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '✓ ' : '✗ ') + passed + ' passed, ' + failed + ' failed');
 process.exit(failed === 0 ? 0 : 1);

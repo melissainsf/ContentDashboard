@@ -726,6 +726,12 @@
     return d.toISOString().slice(0, 10);
   }
 
+  function monthKey(dateish) {
+    const d = new Date(dateish);
+    if (isNaN(d)) return null;
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
   function addWeeks(key, n) {
     const d = new Date(key + 'T00:00:00');
     d.setDate(d.getDate() + n * 7);
@@ -797,6 +803,59 @@
   }
 
   function round1(n) { return Math.round(n * 10) / 10; }
+
+  /**
+   * Headline volume for the Completed widget: everything finished, this
+   * calendar month, this week, and a weekly average.
+   *
+   * Counts ITEMS, the same unit as the list underneath — one row per
+   * request or per Lineage draft. It deliberately does not sum `posts`:
+   * a tile that disagreed with the rows below it would send whoever is
+   * reading it hunting for the missing work. The Capacity tab is where
+   * pieces-of-content volume lives.
+   *
+   * "When it landed" is `completedAt || requestedAt`, matching
+   * weeklyVolume, so this average and the Capacity tab's cannot drift
+   * apart. For a Lineage-sourced row that is Millie's most recent touch
+   * on the draft.
+   */
+  function completedSummary(requests, opts) {
+    const o = opts || {};
+    const now = o.now ? new Date(o.now) : new Date();
+    const done = (requests || []).filter(r => r.status === 'done');
+
+    const thisMonth = monthKey(now);
+    const thisWeek = weekKey(now);
+
+    let month = 0, week = 0;
+    const byWeek = {};
+    done.forEach(r => {
+      const at = r.completedAt || r.requestedAt;
+      if (!at) return;
+      const wk = weekKey(at);
+      if (monthKey(at) === thisMonth) month++;
+      if (wk === thisWeek) week++;
+      byWeek[wk] = (byWeek[wk] || 0) + 1;
+    });
+
+    // The current week is partial. Averaging it in would drag the number
+    // down and understate what Millie actually delivers — the same rule
+    // capacitySummary applies, for the same reason.
+    const closed = Object.keys(byWeek).filter(k => k !== thisWeek);
+    const avgPerWeek = closed.length
+      ? round1(closed.reduce((a, k) => a + byWeek[k], 0) / closed.length)
+      : null;
+
+    return {
+      total: done.length,
+      month: month,
+      week: week,
+      avgPerWeek: avgPerWeek,
+      weeksMeasured: closed.length,
+      monthKey: thisMonth,
+      weekStart: thisWeek
+    };
+  }
 
   /**
    * Per-account coverage: who is getting Millie's time, who is starved,
@@ -1284,6 +1343,7 @@
     workingDaysBetween,
     daysBetween,
     weekKey,
+    monthKey,
     leadTime,
     leadTimeSummary,
     scoreRequest,
@@ -1300,6 +1360,7 @@
     attachPerformance,
     performanceSummary,
     completedByAccount,
+    completedSummary,
     fmtMrr
   };
 });

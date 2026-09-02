@@ -970,6 +970,18 @@ async function loadLineageDrafts() {
   }
 }
 
+function monthName(key) {
+  if (!key) return 'This month';
+  const d = new Date(key + '-01T00:00:00');
+  return isNaN(d) ? key : d.toLocaleDateString('en-GB', { month: 'long' });
+}
+
+function shortDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + 'T00:00:00');
+  return isNaN(d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
 // "1 August 2026" reads better than an ISO date in a sentence.
 function prettyDate(iso) {
   if (!iso) return '';
@@ -1127,8 +1139,19 @@ function renderCompleted() {
 
   const done = requests.filter(r => r.status === 'done');
   const fromLineage = done.filter(r => r.source === 'lineage').length;
+  const vol = CD.completedSummary(requests, {});
+
+  // Volume first, left to right — everything, this month, this week, the
+  // rate — then where it came from, then how it landed. Reading order is
+  // the story: how much, how recently, how consistently.
   document.getElementById('completed-kpis').innerHTML = [
-    kpi('Completed', done.length, 'pieces finished'),
+    kpi('Completed', vol.total, 'items finished'),
+    kpi('This month', vol.month, monthName(vol.monthKey) + ' so far'),
+    kpi('This week', vol.week, 'week of ' + shortDate(vol.weekStart)),
+    kpi('Avg / week', vol.avgPerWeek == null ? '—' : vol.avgPerWeek,
+        vol.weeksMeasured
+          ? 'over ' + vol.weeksMeasured + ' completed week' + (vol.weeksMeasured === 1 ? '' : 's')
+          : 'no completed weeks yet'),
     kpi('Worked in Lineage', draftsConfigured ? fromLineage : '—',
         draftsConfigured
           ? 'drafts she moved since ' + prettyDate(draftsSince)

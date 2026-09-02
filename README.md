@@ -138,7 +138,17 @@ reposts, ICP rate.**
 It shows up in two places:
 
 - **Completed** — a widget at the bottom of the Queue, grouped by customer
-  and ordered by how recent the work is. This is "what did I finish, and
+  and ordered by how recent the work is. It leads with volume: everything
+  finished, this calendar month, this week, and an average per week.
+
+  Weeks are **Monday-start** and the average **excludes the partial current
+  week**, both matching `weekKey` and the Capacity tab, so the two views
+  cannot drift apart. With no closed week yet the average reads `—`, never
+  `0`, which would say she delivers nothing. The tiles count **items** —
+  the same unit as the rows underneath — rather than summing multi-post
+  asks; pieces-of-content volume lives on the Capacity tab, and a tile
+  that disagreed with the list below it would send a reader hunting for
+  work that was never missing. This is "what did I finish, and
   how did it land". Recency uses the post's publish time where there is
   one, because that is when the work actually reached an audience.
 - **Post Performance** — its own tab: every measured post ranked by
