@@ -1,32 +1,76 @@
 // Snapshot of Millie's Lineage draft activity, captured 2026-09-02.
 //
+// GENERATED — do not edit by hand. Rebuild with:
+//   node tools/build-lineage-snapshot.js <logsDir> 2026-08-01
+//
 // WHY A SNAPSHOT EXISTS
 // lineage-drafts.js reads Lineage's activity log live, but the REST path
 // that serves it has never been confirmed (see that file's header), so in
 // production it currently reaches nothing. Without this, the Completed
-// bucket silently reports only the Slack queue — 23 requests — and reads
-// as though Millie had done a fraction of her actual work.
+// bucket silently reports only the Slack queue and reads as though Millie
+// had done a fraction of her actual work.
 //
-// These rows were read from Lineage's own per-company activity logs via
-// the MCP workspace on 2026-09-02, filtered to Millie Hanson's actor id
+// Read from Lineage's per-company activity logs, filtered to her actor id
 // (82d663fe-f00e-4892-ad16-37ac9837d7f7) and to draft.* events from
 // 2026-08-01 onward, deduped to one entry per draft and dated by her most
-// recent touch on it.
+// recent touch on it. 21 accounts had a readable log.
 //
-// IT IS A SNAPSHOT, NOT A FEED. It does not update. The function serves it
-// ONLY when the live endpoint cannot be reached, always marks the response
-// source:"snapshot" with this capture date, and the dashboard says so on
-// screen. The moment LINEAGE_ACTIVITY_URL points at the real path, live
-// data wins and this file stops being read. Delete it then.
+// IT IS A SNAPSHOT, NOT A FEED. The function serves it ONLY when the live
+// endpoint cannot be reached, always marks the response source:"snapshot"
+// with this capture date, and the dashboard says so on screen. The moment
+// LINEAGE_ACTIVITY_URL points at the real path, live data wins and this
+// file stops being read. Delete it then.
 //
-// It is also a FLOOR. A busy account's activity log is capped near 2,000
-// events and keeps the OLDEST, so ten of the twenty-one readable accounts
-// — Sybill and Watt Data among them, her two busiest in July — have logs
-// that stop before 1 August and contribute nothing here. Their August work
-// is real and uncounted.
+// It is also a FLOOR: 10 of those accounts have logs that stop before
+// 2026-08-01, so their work in this window is real and uncounted. A busy
+// account's log is capped near 2,000 events and keeps the OLDEST; only a
+// paginated or date-filtered activity endpoint can reach past that.
 
 exports.capturedAt = '2026-09-02';
 exports.since = '2026-08-01';
+exports.accountsScanned = 21;
+exports.stopsBeforeWindow = [
+  {
+    "company": "virio-dev",
+    "lastEvent": "2026-04-18"
+  },
+  {
+    "company": "virio",
+    "lastEvent": "2026-04-27"
+  },
+  {
+    "company": "vendelux",
+    "lastEvent": "2026-06-01"
+  },
+  {
+    "company": "netlify",
+    "lastEvent": "2026-07-01"
+  },
+  {
+    "company": "axya",
+    "lastEvent": "2026-07-03"
+  },
+  {
+    "company": "runpod",
+    "lastEvent": "2026-07-08"
+  },
+  {
+    "company": "trimble",
+    "lastEvent": "2026-07-12"
+  },
+  {
+    "company": "minimal",
+    "lastEvent": "2026-07-24"
+  },
+  {
+    "company": "sybill",
+    "lastEvent": "2026-07-25"
+  },
+  {
+    "company": "watt-data",
+    "lastEvent": "2026-07-27"
+  }
+];
 exports.drafts = [
   {
     "company": "concord-visa",

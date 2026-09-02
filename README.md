@@ -195,6 +195,24 @@ Completed card itself. `LINEAGE_ACTIVITY_DAYS` is used only if
 `LINEAGE_ACTIVITY_SINCE` is set to empty. This floor applies to the
 Lineage feed only; Slack-sourced requests keep their full history.
 
+**A scheduled job refreshes the snapshot every morning.** It reads each
+company's activity log through the Lineage MCP workspace, writes them to
+a directory as `<company-slug>.jsonl`, and runs
+
+```
+node tools/build-lineage-snapshot.js <logsDir> 2026-08-01
+```
+
+which applies exactly the rule `lineage-drafts.js` applies to live data —
+the author's `draft.*` events, one entry per draft, dated by her most
+recent touch — so the snapshot and the live feed can never disagree about
+what a draft is. The script is a no-op when the result is unchanged, so a
+quiet day produces no commit and no deploy. A push to `main` redeploys
+the site automatically.
+
+The job does **not** refresh Slack or HubSpot: both are already read live
+on every page load and need nothing scheduled.
+
 **Until the endpoint is live, a snapshot ships with the page.**
 `netlify/functions/_lineage-snapshot.js` holds the 20 drafts Millie
 worked from 1 August, read from Lineage's activity logs on 2026-09-02.

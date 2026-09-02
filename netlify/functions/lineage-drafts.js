@@ -146,9 +146,13 @@ exports.handler = async function (event) {
       since: sinceISO,
       authorId, events,
       companiesScanned: new Set(rows.map(d => d.company)).size,
+      // The blind-spot count comes from the snapshot itself rather than a
+      // number written here, so it stays true as accounts come and go.
       note: 'Lineage is not connected, so these ' + rows.length + ' are a snapshot read from its activity ' +
-            'log on ' + snapshot.capturedAt + ', not live. It is also a floor: ten accounts\' logs stop ' +
-            'before ' + sinceISO + ', so work there is real but uncounted. Set LINEAGE_ACTIVITY_URL to go live.',
+            'log on ' + snapshot.capturedAt + ', not live. It is also a floor: ' +
+            (snapshot.stopsBeforeWindow || []).length + ' of ' + (snapshot.accountsScanned || 0) +
+            ' accounts have logs that stop before ' + sinceISO +
+            ', so work there is real but uncounted. Set LINEAGE_ACTIVITY_URL to go live.',
       ...(debug ? { attempts } : {})
     });
   }
