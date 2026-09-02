@@ -31,7 +31,11 @@
 //                            moves it through review and scheduling. Narrow
 //                            this only if you specifically want authorship
 //                            rather than work done.
-//   LINEAGE_ACTIVITY_DAYS    (optional) how far back to look, default 120
+//   LINEAGE_ACTIVITY_SINCE   (optional) ISO date floor, default 2026-08-01 —
+//                            the point from which this team is tracking
+//                            Millie's work. Takes precedence over _DAYS.
+//   LINEAGE_ACTIVITY_DAYS    (optional) rolling window used only when
+//                            LINEAGE_ACTIVITY_SINCE is blank; default 120
 //   LINEAGE_API_BASE         (optional) base for the built-in candidates
 //   LINEAGE_DEBUG=1          (optional) include which URLs were tried
 //
@@ -50,6 +54,8 @@
 const MAX_COMPANIES = 60;   // one dashboard load
 const BATCH = 6;            // never open sixty sockets at once
 const DEFAULT_AUTHOR = '82d663fe-f00e-4892-ad16-37ac9837d7f7';  // Millie Hanson
+const DEFAULT_SINCE = '2026-08-01';   // the team tracks Millie's work from here
+const snapshot = require('./_lineage-snapshot.js');
 
 exports.handler = async function (event) {
   if (event.httpMethod !== 'POST') return reply(405, { error: 'POST only' });
@@ -69,19 +75,30 @@ exports.handler = async function (event) {
   // narrows it.
   const events = (process.env.LINEAGE_ACTIVITY_EVENTS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
+  // A fixed floor rather than a rolling window: the team tracks Millie's
+  // work from a specific date, and a rolling window would quietly drop the
+  // early weeks out of the total as time passed.
+  const sinceRaw = process.env.LINEAGE_ACTIVITY_SINCE === undefined
+    ? DEFAULT_SINCE
+    : process.env.LINEAGE_ACTIVITY_SINCE;
   const days = Number(process.env.LINEAGE_ACTIVITY_DAYS || 120);
-  const since = new Date(Date.now() - days * 86400000);
+  const since = sinceRaw
+    ? new Date(sinceRaw + (sinceRaw.length === 10 ? 'T00:00:00Z' : ''))
+    : new Date(Date.now() - days * 86400000);
+  const sinceISO = since.toISOString().slice(0, 10);
   const debug = process.env.LINEAGE_DEBUG === '1';
 
   const key = process.env.LINEAGE_API_KEY;
   if (!key) {
     return reply(200, {
       drafts: [], configured: false, authorId, events, companiesScanned: 0,
-      note: 'LINEAGE_API_KEY is not set, so drafts written in Lineage cannot be counted.'
+      since: sinceISO, source: 'none',
+      note: 'LINEAGE_API_KEY is not set, so work done in Lineage cannot be counted.'
     });
   }
   if (!companies.length) {
-    return reply(200, { drafts: [], configured: true, authorId, events, companiesScanned: 0, note: null });
+    return reply(200, { drafts: [], configured: true, authorId, events, companiesScanned: 0,
+      since: sinceISO, source: 'live', note: null });
   }
 
   const headers = { Authorization: 'Bearer ' + key, Accept: 'application/json' };
@@ -114,10 +131,24 @@ exports.handler = async function (event) {
     }
   }
 
+  // No live endpoint. Serve the committed snapshot rather than nothing:
+  // an empty list here would silently report only the Slack queue and read
+  // as though Millie had done a fraction of her actual work. It is always
+  // labelled as a snapshot, with its capture date, so it is never mistaken
+  // for live data.
   if (!workingShape) {
+    const rows = snapshot.drafts.filter(d => !d.ts || new Date(d.ts) >= since);
     return reply(200, {
-      drafts: [], configured: false, authorId, events, companiesScanned: 0,
-      note: 'Could not reach a working Lineage activity endpoint. Set LINEAGE_ACTIVITY_URL to the real path.',
+      drafts: rows,
+      configured: true,
+      source: 'snapshot',
+      capturedAt: snapshot.capturedAt,
+      since: sinceISO,
+      authorId, events,
+      companiesScanned: new Set(rows.map(d => d.company)).size,
+      note: 'Lineage is not connected, so these ' + rows.length + ' are a snapshot read from its activity ' +
+            'log on ' + snapshot.capturedAt + ', not live. It is also a floor: ten accounts\' logs stop ' +
+            'before ' + sinceISO + ', so work there is real but uncounted. Set LINEAGE_ACTIVITY_URL to go live.',
       ...(debug ? { attempts } : {})
     });
   }
@@ -150,6 +181,8 @@ exports.handler = async function (event) {
   return reply(200, {
     drafts,
     configured: true,
+    source: 'live',
+    since: sinceISO,
     authorId,
     events: events.length ? events : ['draft.*'],
     companiesScanned: companies.length - failures,

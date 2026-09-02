@@ -733,6 +733,27 @@ const lineageGroups = CD.completedByAccount(CD.attachPerformance(withDrafts, {})
 eq('two customers in the completed widget', lineageGroups.length, 2);
 eq('newest account first', lineageGroups[0].account, 'Minimal');
 
+// ── The August floor and the shipped snapshot ──────────────────
+section('Window and snapshot');
+
+const snap = require('./netlify/functions/_lineage-snapshot.js');
+eq('the snapshot declares the window it was cut for', snap.since, '2026-08-01');
+ok('and when it was captured', /^\d{4}-\d{2}-\d{2}$/.test(snap.capturedAt));
+ok('every snapshot row is on or after the floor',
+  snap.drafts.every(d => d.ts >= '2026-08-01'));
+ok('every snapshot row can be turned into a completed item',
+  CD.lineageDraftsToRequests(snap.drafts, {}).every(r =>
+    r.slackStatus === 'done' && r.source === 'lineage' && r.postRefs.length === 1));
+eq('the snapshot dedupes to one row per draft',
+  CD.lineageDraftsToRequests(snap.drafts, {}).length, snap.drafts.length);
+
+// The floor is a fixed date, not a rolling window: a rolling one would
+// quietly drop the early weeks out of the total as time passed.
+eq('events before the floor are dropped',
+  parseLog(LOG_LINES, 'sourcera', LINEAGE_MILLIE, [], new Date('2026-08-19T00:00:00Z')).length, 0);
+eq('events on or after it are kept',
+  parseLog(LOG_LINES, 'sourcera', LINEAGE_MILLIE, [], new Date('2026-08-01T00:00:00Z')).length, 2);
+
 // ── Summary ────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '✓ ' : '✗ ') + passed + ' passed, ' + failed + ' failed');
 process.exit(failed === 0 ? 0 : 1);

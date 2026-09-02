@@ -67,6 +67,8 @@ main{padding:24px 32px 60px;max-width:1560px;margin:0 auto}
 .section-head{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .section-title{font-family:'Syne',sans-serif;font-size:14px;font-weight:600;letter-spacing:0.02em}
 .section-sub{font-size:12px;color:var(--ink2);margin-top:2px;font-weight:400;font-family:'DM Sans',sans-serif;letter-spacing:0}
+#completed-window{color:var(--ink);font-weight:600}
+#completed-window:not(:empty){margin-left:4px}
 .section-body{padding:18px}
 .section-body.flush{padding:0}
 /* TOOLBAR */
@@ -222,7 +224,8 @@ footer{padding:22px 32px 40px;font-size:12px;color:var(--ink3);text-align:center
       <div class="section-head">
         <div>
           <div class="section-title">Completed</div>
-          <div class="section-sub">Posts Millie has finished, newest customer first, with how they did on LinkedIn.</div>
+          <div class="section-sub">Posts Millie has finished, newest customer first, with how they did on LinkedIn.
+            <span id="completed-window"></span></div>
         </div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <span class="chip grey" id="completed-synced">—</span>
@@ -403,9 +406,12 @@ let charts = {};
 let analytics = {};      // Lineage engagement, keyed by post id
 let lineageNote = null;
 let lineageConfigured = false;
-let lineageDrafts = [];   // draft.created events Millie authored in Lineage
+let lineageDrafts = [];   // draft.* events Millie is the actor on, from Lineage
 let draftsNote = null;
 let draftsConfigured = false;
+let draftsSource = null;    // 'live' | 'snapshot' | 'none'
+let draftsSince = null;     // ISO date floor the feed applied
+let draftsCapturedAt = null;
 let lastGoodRefresh = null;
 
 const qState = { search: '', client: '', requester: '', type: '' };
@@ -950,14 +956,26 @@ async function loadLineageDrafts() {
     lineageDrafts = data.drafts || [];
     draftsConfigured = !!data.configured;
     draftsNote = data.note || null;
+    draftsSource = data.source || null;
+    draftsSince = data.since || null;
+    draftsCapturedAt = data.capturedAt || null;
   } catch (e) {
     // Millie's own drafts are an addition to the queue, never a
     // precondition for it. An empty list here is reported as "not
     // connected", never as "she wrote nothing".
     lineageDrafts = [];
     draftsConfigured = false;
+    draftsSource = 'none';
     draftsNote = e.message;
   }
+}
+
+// "1 August 2026" reads better than an ISO date in a sentence.
+function prettyDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso.length === 10 ? iso + 'T00:00:00Z' : iso);
+  return isNaN(d) ? iso : d.toLocaleDateString('en-GB',
+    { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 }
 
 // ── PERFORMANCE ─────────────────────────────────────────────────
@@ -1078,9 +1096,15 @@ function renderCompleted() {
   // which half is actually missing.
   const banner = document.getElementById('completed-banner');
   const problems = [];
+  const infos = [];
   if (!draftsConfigured) {
     problems.push('<b>Work done in Lineage is not being counted.</b> ' + escapeHtml(draftsNote || '') +
       '<br>Only work requested in <code>#content-support</code> is listed below.');
+  } else if (draftsSource === 'snapshot') {
+    infos.push('<b>Lineage work is a snapshot, not live.</b> Read from Lineage\'s activity log on ' +
+      escapeHtml(prettyDate(draftsCapturedAt)) + ' and shipped with the page, because the live endpoint is not ' +
+      'configured yet. It is a floor: ten accounts\' logs stop before ' + escapeHtml(prettyDate(draftsSince)) +
+      ', so work there is real and uncounted.');
   }
   if (!lineageConfigured) {
     problems.push('<b>Post performance is not connected.</b> ' + escapeHtml(lineageNote || '') +
@@ -1089,19 +1113,26 @@ function renderCompleted() {
   if (problems.length) {
     banner.className = 'banner warn';
     banner.innerHTML = '<div>' + problems.join('<br><br>') + '</div>';
-  } else if (draftsNote || lineageNote) {
+  } else if (infos.length || lineageNote) {
     banner.className = 'banner info';
-    banner.innerHTML = '<div>' + [draftsNote, lineageNote].filter(Boolean).map(escapeHtml).join('<br>') + '</div>';
+    banner.innerHTML = '<div>' + infos.concat(lineageNote ? [escapeHtml(lineageNote)] : []).join('<br><br>') + '</div>';
   } else {
     banner.className = 'banner info hidden';
   }
+
+  // The window this widget counts over, stated where it is read.
+  set('completed-window', draftsSince
+    ? 'Lineage work counted from ' + prettyDate(draftsSince) + ' onward.'
+    : '');
 
   const done = requests.filter(r => r.status === 'done');
   const fromLineage = done.filter(r => r.source === 'lineage').length;
   document.getElementById('completed-kpis').innerHTML = [
     kpi('Completed', done.length, 'pieces finished'),
     kpi('Worked in Lineage', draftsConfigured ? fromLineage : '—',
-        draftsConfigured ? 'drafts she moved, never requested' : 'feed not connected',
+        draftsConfigured
+          ? 'drafts she moved since ' + prettyDate(draftsSince)
+          : 'feed not connected',
         draftsConfigured ? '' : 'alert'),
     kpi('Reactions', perf.likes, 'across measured posts'),
     kpi('Comments', perf.comments, 'the signal worth reading'),

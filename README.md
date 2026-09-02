@@ -188,12 +188,36 @@ Her footprint is concentrated on accounts that rarely appear in
 InnovoCommerce, Concord Visa — which is exactly the work the Slack
 queue could never see.
 
+**The window starts 1 August 2026** — a fixed floor, set by
+`LINEAGE_ACTIVITY_SINCE`, not a rolling window, so the early weeks do not
+quietly drop out of the total as time passes. It is stated on the
+Completed card itself. `LINEAGE_ACTIVITY_DAYS` is used only if
+`LINEAGE_ACTIVITY_SINCE` is set to empty. This floor applies to the
+Lineage feed only; Slack-sourced requests keep their full history.
+
+**Until the endpoint is live, a snapshot ships with the page.**
+`netlify/functions/_lineage-snapshot.js` holds the 20 drafts Millie
+worked from 1 August, read from Lineage's activity logs on 2026-09-02.
+The function serves it **only** when the live endpoint cannot be reached,
+always marks the response `source: "snapshot"` with the capture date, and
+the dashboard says so on screen. It exists because an empty list here
+silently reports the Slack queue alone and reads as though she had done a
+fraction of her actual work. Point `LINEAGE_ACTIVITY_URL` at the real
+path and live data wins; delete the file then.
+
 **The count is a floor, not a total.** A busy account's activity log is
 capped at roughly 2,000 events and keeps the *oldest*, so recent work on
 the busiest accounts falls outside it. Netlify's log stops at
 2026-07-01, Axya's at 07-03, Trimble's at 07-12 — a forced VFS refresh
 does not extend them. Any account whose window ends before today is
 under-reported here, and there is no way around it from this API.
+
+The August floor makes this bite harder, not softer: **ten of the
+twenty-one readable accounts have logs that stop before 1 August**,
+including Sybill and Watt Data, her two busiest accounts in July. They
+contribute nothing to the August count even though the work is real. A
+paginated or date-filtered activity endpoint is the only fix, and it is
+worth asking Lineage engineering for alongside the two URLs.
 
 ### What is not shown, and why
 
