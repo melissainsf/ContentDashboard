@@ -1079,7 +1079,7 @@ function renderCompleted() {
   const banner = document.getElementById('completed-banner');
   const problems = [];
   if (!draftsConfigured) {
-    problems.push('<b>Drafts written in Lineage are not being counted.</b> ' + escapeHtml(draftsNote || '') +
+    problems.push('<b>Work done in Lineage is not being counted.</b> ' + escapeHtml(draftsNote || '') +
       '<br>Only work requested in <code>#content-support</code> is listed below.');
   }
   if (!lineageConfigured) {
@@ -1100,8 +1100,8 @@ function renderCompleted() {
   const fromLineage = done.filter(r => r.source === 'lineage').length;
   document.getElementById('completed-kpis').innerHTML = [
     kpi('Completed', done.length, 'pieces finished'),
-    kpi('Written in Lineage', draftsConfigured ? fromLineage : '—',
-        draftsConfigured ? 'started by Millie, never requested' : 'feed not connected',
+    kpi('Worked in Lineage', draftsConfigured ? fromLineage : '—',
+        draftsConfigured ? 'drafts she moved, never requested' : 'feed not connected',
         draftsConfigured ? '' : 'alert'),
     kpi('Reactions', perf.likes, 'across measured posts'),
     kpi('Comments', perf.comments, 'the signal worth reading'),
@@ -1155,7 +1155,7 @@ function completedRow(r) {
       ((r.postRefs || []).length ? 'Awaiting LinkedIn data' : 'No post linked') + '</span></td>';
 
   const origin = r.source === 'lineage'
-    ? ' <span class="chip teal" title="Millie started this draft in Lineage — nobody asked for it in #content-support">Lineage</span>'
+    ? ' <span class="chip teal" title="Millie worked this draft in Lineage — wrote, edited, reviewed or scheduled it — and nobody asked for it in #content-support">Lineage</span>'
     : '';
 
   return '<tr>' +

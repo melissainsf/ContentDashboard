@@ -172,21 +172,28 @@ The row ids are stable (`lineage:<post-uuid>`), so ticking one back to
 another status in the dashboard sticks across refreshes exactly as it
 does for a Slack request.
 
-**By default only `draft.created` counts.** Set
-`LINEAGE_ACTIVITY_EVENTS` to widen it — adding `draft.updated` also
-counts rewrites of drafts somebody else started, which is a large part
-of what Millie actually does.
+**Every `draft.*` event counts by default, deduped to one row per
+draft.** Counting only `draft.created` would be badly wrong. Measured
+across all 46 accounts over 2026-07-08 → 09-02, Millie **created 1
+draft and worked 45**: she rarely starts a post from scratch any more,
+she takes one the ghostwriter or an AM made and moves it through review
+and scheduling. Her recent events break down as 50
+`draft.status_changed`, 30 `draft.scheduled`, 12
+`rescheduled`/`unscheduled`, 3 `draft.updated`, 1 `draft.created`.
+Set `LINEAGE_ACTIVITY_EVENTS` to narrow it only if you specifically
+want authorship rather than work done.
 
-**This will read zero until her workflow moves into Lineage.** As of
-2026-09-02, across eight accounts — four of them with complete logs
-running to that date — Millie's actor id appears on three events in
-total, all status changes on Sourcera on 2026-08-18, and no draft
-creations or edits anywhere. Her stated protocol explains it: *"If I
-want to change anything or have ANY comments, I will ALWAYS copy the
-post, rewrite it and ping you a message."* Lineage credits a post to
-whoever saved it, so work handed over as text and pasted in by an AM is
-recorded against the AM. The plumbing is here; the attribution starts
-the day she edits in Lineage directly.
+Her footprint is concentrated on accounts that rarely appear in
+`#content-support` — Percents, Watt Data, Sybill, Fergana Labs,
+InnovoCommerce, Concord Visa — which is exactly the work the Slack
+queue could never see.
+
+**The count is a floor, not a total.** A busy account's activity log is
+capped at roughly 2,000 events and keeps the *oldest*, so recent work on
+the busiest accounts falls outside it. Netlify's log stops at
+2026-07-01, Axya's at 07-03, Trimble's at 07-12 — a forced VFS refresh
+does not extend them. Any account whose window ends before today is
+under-reported here, and there is no way around it from this API.
 
 ### What is not shown, and why
 

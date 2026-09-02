@@ -22,9 +22,15 @@
 //   LINEAGE_AUTHOR_ID        (optional) the Lineage user id to attribute to;
 //                            defaults to Millie Hanson's
 //   LINEAGE_ACTIVITY_EVENTS  (optional) comma-separated event types to count.
-//                            Default 'draft.created' — the drafts she starts.
-//                            Add 'draft.updated' to also count rewrites of
-//                            somebody else's draft.
+//                            Default: EVERY draft.* event, deduped to one row
+//                            per draft. Counting only draft.created would be
+//                            wrong — measured over the eight weeks from
+//                            2026-07-08, Millie created 1 draft and worked 45.
+//                            She rarely starts a post from scratch any more;
+//                            she takes one the ghostwriter or an AM made and
+//                            moves it through review and scheduling. Narrow
+//                            this only if you specifically want authorship
+//                            rather than work done.
 //   LINEAGE_ACTIVITY_DAYS    (optional) how far back to look, default 120
 //   LINEAGE_API_BASE         (optional) base for the built-in candidates
 //   LINEAGE_DEBUG=1          (optional) include which URLs were tried
@@ -59,7 +65,9 @@ exports.handler = async function (event) {
     .slice(0, MAX_COMPANIES);
 
   const authorId = process.env.LINEAGE_AUTHOR_ID || DEFAULT_AUTHOR;
-  const events = (process.env.LINEAGE_ACTIVITY_EVENTS || 'draft.created')
+  // Empty means "any draft.* event" — see the header. An explicit list
+  // narrows it.
+  const events = (process.env.LINEAGE_ACTIVITY_EVENTS || '')
     .split(',').map(s => s.trim()).filter(Boolean);
   const days = Number(process.env.LINEAGE_ACTIVITY_DAYS || 120);
   const since = new Date(Date.now() - days * 86400000);
@@ -135,14 +143,15 @@ exports.handler = async function (event) {
     notes.push(failures + ' of ' + companies.length + ' accounts had no readable activity log, so drafts there are not counted.');
   }
   if (!drafts.length) {
-    notes.push('No drafts by this author in the last ' + days + ' days. Lineage credits a post to whoever saved it, ' +
-               'so work handed over as text and pasted in by someone else will not appear here.');
+    notes.push('No draft activity by this author in the last ' + days + ' days across the accounts scanned. ' +
+               'Note that a busy account\'s activity log is capped at about 2,000 events and keeps the OLDEST, ' +
+               'so recent work on the busiest accounts can fall outside it.');
   }
   return reply(200, {
     drafts,
     configured: true,
     authorId,
-    events,
+    events: events.length ? events : ['draft.*'],
     companiesScanned: companies.length - failures,
     note: notes.length ? notes.join(' ') : null,
     ...(debug ? { workingShape, attempts } : {})
@@ -185,8 +194,8 @@ function parseLog(text, company, authorId, events, since) {
   const out = [];
   rows.forEach(r => {
     if (!r || r.actor !== authorId) return;
-    const type = r.event_type || r.content;
-    if (events.indexOf(type) === -1) return;
+    const type = String(r.event_type || r.content || '');
+    if (events.length ? events.indexOf(type) === -1 : type.indexOf('draft.') !== 0) return;
     if (r.entity_type && r.entity_type !== 'draft') return;
     const postId = r.entity_id || r.draft_id;
     if (!postId) return;

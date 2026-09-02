@@ -619,6 +619,17 @@ const SINCE = new Date('2026-01-01T00:00:00Z');
 
 const mine = parseLog(LOG_LINES, 'sourcera', LINEAGE_MILLIE, ['draft.created'], SINCE);
 eq('only the author’s draft.created is kept', mine.length, 1);
+
+// The default counts every draft.* event, not just authorship. Measured
+// over 2026-07-08..09-02 Millie created 1 draft and worked 45: she moves
+// existing drafts through review and scheduling rather than starting them,
+// so a draft.created-only count would report 1 post of work.
+const anyDraft = parseLog(LOG_LINES, 'sourcera', LINEAGE_MILLIE, [], SINCE);
+eq('an empty event list means every draft.* event', anyDraft.length, 2);
+ok('the status change is included by default',
+  anyDraft.some(d => d.postId === '569cb8f2-832e-4e65-806e-523f3a50a883'));
+eq('another author is still excluded by default',
+  anyDraft.filter(d => d.postId === 'b538296a-5797-42bd-bb07-f5e8c66237ae').length, 0);
 eq('post id is lowercased so it matches a url', mine[0].postId, '1bee7a28-dacf-4ee8-84f3-856f4f307c29');
 eq('company travels with the event', mine[0].company, 'sourcera');
 eq('title comes through', mine[0].title, 'Smaller VCs in SF');
@@ -673,6 +684,17 @@ eq('an untitled draft still reads as something', stubs[1].text, 'Draft written i
 eq('the client slug is kept for account matching', stubs[1].clientSlug, 'minimal');
 eq('a repeated event is only counted once',
   CD.lineageDraftsToRequests(draftEvents.concat([draftEvents[0]]), {}).length, 2);
+
+// Several events on one draft — created, edited, scheduled — are one piece
+// of work, and the row carries the most recent touch because the feed
+// arrives newest first.
+const manyTouches = CD.lineageDraftsToRequests([
+  { company: 'percents', postId: 'cccc3333-0000-4000-8000-000000000003', ts: '2026-08-26T13:32:00Z' },
+  { company: 'percents', postId: 'cccc3333-0000-4000-8000-000000000003', ts: '2026-08-20T07:31:00Z' },
+  { company: 'percents', postId: 'cccc3333-0000-4000-8000-000000000003', ts: '2026-07-12T18:31:00Z' }
+], {});
+eq('one row for a draft she touched three times', manyTouches.length, 1);
+eq('and it is dated by her most recent touch', manyTouches[0].requestedAt, '2026-08-26T13:32:00Z');
 eq('no drafts is not an error', CD.lineageDraftsToRequests(null, {}).length, 0);
 
 const LINEAGE_ACCOUNTS = [
