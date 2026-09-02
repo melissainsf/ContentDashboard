@@ -1065,6 +1065,69 @@
     return null;
   }
 
+  // ── Lineage-authored drafts ───────────────────────────────────
+
+  /**
+   * Millie's own drafts, straight from Lineage's activity log.
+   *
+   * The queue only ever sees work somebody asked for in
+   * #content-support. Millie's own words there on 2026-07-15: "please
+   * drop some requests in! Otherwise I will be spending time looking at
+   * everyones accounts" — so the unasked-for half of her output was
+   * invisible to this dashboard, and the Completed bucket read as
+   * though she had delivered less than she had.
+   *
+   * Lineage stamps an actor id on every draft event, so a draft she
+   * creates is attributable without anyone tagging anything. Each one
+   * becomes a completed item, because for Millie the draft IS the
+   * deliverable — the AM and the client take it from there.
+   *
+   * Events arrive already filtered to her actor id by
+   * /api/lineage-drafts; this function only reshapes them. It is
+   * deliberately tolerant about field names because the activity log
+   * is an internal Lineage surface, not a contract.
+   */
+  function lineageDraftsToRequests(events, opts) {
+    const o = opts || {};
+    const seen = {};
+    const out = [];
+    (events || []).forEach(e => {
+      if (!e) return;
+      const postId = String(e.postId || e.entity_id || e.draft_id || '').toLowerCase();
+      const slug = String(e.company || e.companySlug || '').toLowerCase();
+      const at = e.ts || e.at || e.created_at || null;
+      // Without a post id there is nothing stable to key on, and a row
+      // that cannot be deduped would double-count on the next refresh.
+      if (!postId || seen[postId]) return;
+      seen[postId] = true;
+      out.push({
+        id: 'lineage:' + postId,
+        ts: null,
+        source: 'lineage',
+        permalink: slug ? 'https://app.virio.ai/lineage/' + slug + '/' + postId : null,
+        requestedBy: o.authorName || 'Millie',
+        requestedAt: at,
+        client: null,
+        clientSlug: slug || null,
+        links: slug ? ['https://app.virio.ai/lineage/' + slug + '/' + postId] : [],
+        postRefs: slug ? [{ company: slug, postId: postId }] : [],
+        dueAt: null,
+        dueRaw: '',
+        asap: false,
+        requesterPriority: null,
+        type: 'Post',
+        posts: 1,
+        notes: '',
+        text: e.title || 'Draft written in Lineage',
+        // Nobody ticks these: writing the draft is the completion, and
+        // the activity log only records it once it exists.
+        slackStatus: 'done',
+        threadReplies: 0
+      });
+    });
+    return out;
+  }
+
   /**
    * Full pipeline: raw Slack messages + stored overrides + accounts →
    * the request list the dashboard renders.
@@ -1084,6 +1147,17 @@
     });
     const parsed = [];
     (messages || []).forEach(m => { parseMessage(m, o).forEach(r => parsed.push(r)); });
+
+    // Drafts Millie wrote in Lineage. A post that was ALSO asked for in
+    // Slack is already represented by that request — adding it again
+    // would show one piece of work twice and inflate the week's volume —
+    // so the Slack row wins and the Lineage event is dropped.
+    const askedFor = {};
+    parsed.forEach(r => (r.postRefs || []).forEach(ref => { askedFor[ref.postId] = true; }));
+    lineageDraftsToRequests(o.lineageDrafts, o).forEach(r => {
+      if (r.postRefs.some(ref => askedFor[ref.postId])) return;
+      parsed.push(r);
+    });
 
     // Manually-added requests live only in the override store.
     Object.keys(ov).forEach(id => {
@@ -1220,6 +1294,7 @@
     coverageByAccount,
     normalizeName,
     matchAccount,
+    lineageDraftsToRequests,
     buildRequests,
     prioritise,
     attachPerformance,

@@ -601,6 +601,116 @@ eq('oldest post last', multi[0].items[2].id, '1');
 
 eq('nothing completed yields no groups', CD.completedByAccount([]).length, 0);
 
+// ── Drafts Millie wrote in Lineage ─────────────────────────────
+// The fixtures below are verbatim lines from Lineage's own activity
+// log (Sourcera, 2026-08-18), so the parser is tested against the
+// shape the log actually emits.
+section('Lineage-authored drafts');
+
+const LINEAGE_MILLIE = '82d663fe-f00e-4892-ad16-37ac9837d7f7';
+const LOG_LINES = [
+  '{"source":"platform","role":"system","content":"draft.created","actor":"82d663fe-f00e-4892-ad16-37ac9837d7f7","ts":"2026-08-18T09:46:39.786678+00:00","event_type":"draft.created","entity_type":"draft","entity_id":"1BEE7A28-DACF-4EE8-84F3-856F4F307C29","title":"Smaller VCs in SF"}',
+  '{"source":"platform","role":"system","content":"draft.status_changed","actor":"82d663fe-f00e-4892-ad16-37ac9837d7f7","ts":"2026-08-18T10:47:01.25592+00:00","event_type":"draft.status_changed","entity_type":"draft","entity_id":"569cb8f2-832e-4e65-806e-523f3a50a883","to":"editing","from":"draft","override":true}',
+  '{"source":"platform","role":"system","content":"draft.created","actor":"aa62072f-c148-41b5-a9e9-194824f1a3fe","ts":"2026-06-29T11:47:57.031946+00:00","event_type":"draft.created","entity_type":"draft","entity_id":"b538296a-5797-42bd-bb07-f5e8c66237ae","title":"","user_id":"d4177fcc-09b7-451b-8ac9-5994a6be5b83"}'
+].join('\n');
+
+const parseLog = require('./netlify/functions/lineage-drafts.js').parseLog;
+const SINCE = new Date('2026-01-01T00:00:00Z');
+
+const mine = parseLog(LOG_LINES, 'sourcera', LINEAGE_MILLIE, ['draft.created'], SINCE);
+eq('only the author’s draft.created is kept', mine.length, 1);
+eq('post id is lowercased so it matches a url', mine[0].postId, '1bee7a28-dacf-4ee8-84f3-856f4f307c29');
+eq('company travels with the event', mine[0].company, 'sourcera');
+eq('title comes through', mine[0].title, 'Smaller VCs in SF');
+
+// Millie's real footprint on Sourcera is status changes, not authorship.
+// Counting those as work she created would credit her with somebody
+// else's draft, so they are only ever counted when explicitly asked for.
+eq('status changes are not drafts she wrote',
+  parseLog(LOG_LINES, 'sourcera', LINEAGE_MILLIE, ['draft.created'], SINCE)
+    .filter(d => d.postId === '569cb8f2-832e-4e65-806e-523f3a50a883').length, 0);
+eq('but they can be counted on request',
+  parseLog(LOG_LINES, 'sourcera', LINEAGE_MILLIE, ['draft.created', 'draft.status_changed'], SINCE).length, 2);
+
+eq('another author’s draft is never attributed to her',
+  mine.filter(d => d.postId === 'b538296a-5797-42bd-bb07-f5e8c66237ae').length, 0);
+
+eq('events older than the window are dropped',
+  parseLog(LOG_LINES, 'sourcera', LINEAGE_MILLIE, ['draft.created'], new Date('2026-09-01T00:00:00Z')).length, 0);
+
+// A wrong endpoint must not read as "she wrote nothing".
+ok('a non-activity payload is rejected rather than counted as zero',
+  parseLog('{"results":[{"name":"Acme","account_health":"green"}]}', 'x', LINEAGE_MILLIE, ['draft.created'], SINCE) === null);
+ok('an empty body is rejected',
+  parseLog('', 'x', LINEAGE_MILLIE, ['draft.created'], SINCE) === null);
+ok('an html error page is rejected',
+  parseLog('<!doctype html><title>404</title>', 'x', LINEAGE_MILLIE, ['draft.created'], SINCE) === null);
+ok('a log with no events by this author parses to an empty list, not null',
+  Array.isArray(parseLog(LOG_LINES, 'sourcera', 'someone-else', ['draft.created'], SINCE)));
+
+// A truncated final line is normal for a streamed log and must not
+// discard the events that did arrive.
+eq('a torn last line does not lose the good ones',
+  parseLog(LOG_LINES + '\n{"source":"platform","actor":"82d6', 'sourcera', LINEAGE_MILLIE, ['draft.created'], SINCE).length, 1);
+
+// ── Lineage drafts become completed rows ───────────────────────
+section('Lineage drafts in the Completed bucket');
+
+const draftEvents = [
+  { company: 'sourcera', postId: 'aaaa1111-0000-4000-8000-000000000001', ts: '2026-08-18T09:46:39Z', title: 'Smaller VCs in SF' },
+  { company: 'minimal',  postId: 'bbbb2222-0000-4000-8000-000000000002', ts: '2026-08-20T11:00:00Z', title: null }
+];
+
+const stubs = CD.lineageDraftsToRequests(draftEvents, {});
+eq('one row per draft', stubs.length, 2);
+eq('id is stable so a correction survives a refresh', stubs[0].id, 'lineage:aaaa1111-0000-4000-8000-000000000001');
+eq('lands as completed work', stubs[0].slackStatus, 'done');
+eq('marked as coming from Lineage', stubs[0].source, 'lineage');
+eq('carries a post ref so engagement can attach later', stubs[0].postRefs[0].postId, 'aaaa1111-0000-4000-8000-000000000001');
+eq('links back to the post in Lineage', stubs[0].permalink,
+  'https://app.virio.ai/lineage/sourcera/aaaa1111-0000-4000-8000-000000000001');
+eq('an untitled draft still reads as something', stubs[1].text, 'Draft written in Lineage');
+eq('the client slug is kept for account matching', stubs[1].clientSlug, 'minimal');
+eq('a repeated event is only counted once',
+  CD.lineageDraftsToRequests(draftEvents.concat([draftEvents[0]]), {}).length, 2);
+eq('no drafts is not an error', CD.lineageDraftsToRequests(null, {}).length, 0);
+
+const LINEAGE_ACCOUNTS = [
+  { id: 'a1', name: 'Sourcera', mrr: 6000 },
+  { id: 'a2', name: 'Minimal', mrr: 9000 }
+];
+
+const withDrafts = CD.buildRequests([], {}, LINEAGE_ACCOUNTS, { lineageDrafts: draftEvents });
+eq('both drafts reach the request list', withDrafts.length, 2);
+eq('the slug matched a HubSpot account', withDrafts[0].accountName, 'Sourcera');
+eq('and it is done, so it sits in Completed', withDrafts[0].status, 'done');
+
+// The same post asked for in Slack AND written in Lineage is one piece
+// of work. Showing it twice would inflate the week's delivered volume.
+const askMsg = {
+  ts: ts('2026-08-17T09:00:00Z'),
+  user: 'U0AQTDE8GRY',
+  userName: 'Maxwell',
+  text: 'Could I get a post for Sourcera about smaller VCs? <https://app.virio.ai/lineage/sourcera/aaaa1111-0000-4000-8000-000000000001|link>',
+  reactions: [{ name: 'large_green_circle' }]
+};
+const merged = CD.buildRequests([askMsg], {}, LINEAGE_ACCOUNTS, Object.assign({}, OPTS, { lineageDrafts: draftEvents }));
+eq('the duplicate is dropped, not shown twice', merged.length, 2);
+eq('the Slack request is the one kept', merged.filter(r => r.source === 'lineage').length, 1);
+ok('the surviving Lineage row is the one nobody asked for',
+  merged.filter(r => r.source === 'lineage')[0].postRefs[0].postId === 'bbbb2222-0000-4000-8000-000000000002');
+
+// Ticking a Lineage-sourced row off still works, because the id is stable.
+const corrected = CD.buildRequests([], { 'lineage:bbbb2222-0000-4000-8000-000000000002': { status: 'accepted' } },
+  LINEAGE_ACCOUNTS, { lineageDrafts: draftEvents });
+eq('a dashboard override beats the Lineage default',
+  corrected.find(r => r.id === 'lineage:bbbb2222-0000-4000-8000-000000000002').status, 'accepted');
+
+// And they group into the Completed widget like any other finished work.
+const lineageGroups = CD.completedByAccount(CD.attachPerformance(withDrafts, {}));
+eq('two customers in the completed widget', lineageGroups.length, 2);
+eq('newest account first', lineageGroups[0].account, 'Minimal');
+
 // ── Summary ────────────────────────────────────────────────────
 console.log('\n' + (failed === 0 ? '✓ ' : '✗ ') + passed + ' passed, ' + failed + ' failed');
 process.exit(failed === 0 ? 0 : 1);

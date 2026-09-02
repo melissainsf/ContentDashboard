@@ -31,7 +31,7 @@ dashboard.
 | --- | --- |
 | **HubSpot** | The client book — MRR, Account Manager, Content Engineer, Content Health Score, CSM Sentiment, contracted posts/month, products |
 | **Slack `#content-support`** | The requests themselves — "Millie will you write an ABM post for my customer X" |
-| **Lineage** | Reactions, comments, reposts and ICP rate on the posts Millie writes |
+| **Lineage** | The drafts Millie writes herself, plus reactions, comments, reposts and ICP rate on the posts that come out of this queue |
 
 ---
 
@@ -148,6 +148,46 @@ Completed work with no LinkedIn data still appears in both — it is work
 Millie did, and hiding it would make the record read as though less was
 delivered than actually was. It is marked *awaiting data*, never zero.
 
+### Work Millie starts herself
+
+The queue only ever knew about work somebody asked for. Millie in
+`#content-support` on 2026-07-15: *"please drop some requests in!
+Otherwise I will be spending time looking at everyones accounts."*
+Everything in that second category was invisible here, so the Completed
+bucket read as though she had delivered less than she had.
+
+Lineage post records carry **no author** — the only person on a post is
+the client who publishes it. But Lineage's per-company **activity log**
+stamps an actor id on every draft event, which is real per-post
+attribution. `netlify/functions/lineage-drafts.js` reads that log and
+returns the drafts created by one author; each becomes a completed row
+tagged `Lineage`, because for Millie the draft *is* the deliverable —
+the AM and the client take it from there.
+
+A post that was both asked for in Slack **and** written in Lineage is
+one piece of work: the Slack request wins and the Lineage event is
+dropped, so the week's volume is not inflated by counting it twice.
+
+The row ids are stable (`lineage:<post-uuid>`), so ticking one back to
+another status in the dashboard sticks across refreshes exactly as it
+does for a Slack request.
+
+**By default only `draft.created` counts.** Set
+`LINEAGE_ACTIVITY_EVENTS` to widen it — adding `draft.updated` also
+counts rewrites of drafts somebody else started, which is a large part
+of what Millie actually does.
+
+**This will read zero until her workflow moves into Lineage.** As of
+2026-09-02, across eight accounts — four of them with complete logs
+running to that date — Millie's actor id appears on three events in
+total, all status changes on Sourcera on 2026-08-18, and no draft
+creations or edits anywhere. Her stated protocol explains it: *"If I
+want to change anything or have ANY comments, I will ALWAYS copy the
+post, rewrite it and ping you a message."* Lineage credits a post to
+whoever saved it, so work handed over as text and pasted in by an AM is
+recorded against the AM. The plumbing is here; the attribution starts
+the day she edits in Lineage directly.
+
 ### What is not shown, and why
 
 **Impressions.** Lineage does not expose impressions or views for LinkedIn
@@ -189,6 +229,10 @@ The channel is private, so a Slack app must be created and invited.
 | `SLACK_BOT_TOKEN` | **yes** | No live requests; manual entry still works |
 | `LINEAGE_API_KEY` | for performance | Post Performance tab says it is not connected |
 | `LINEAGE_POST_ANALYTICS_URL` | see below | Falls back to guessing the path |
+| `LINEAGE_ACTIVITY_URL` | for self-started drafts | Falls back to guessing the path; Completed shows a banner |
+| `LINEAGE_AUTHOR_ID` | no | Defaults to Millie Hanson's Lineage user id |
+| `LINEAGE_ACTIVITY_EVENTS` | no | Defaults to `draft.created` |
+| `LINEAGE_ACTIVITY_DAYS` | no | Defaults to `120` |
 | `SLACK_CONTENT_CHANNEL_ID` | no | Defaults to `C0BFY7Y3MK7` (`#content-support`) |
 | `SLACK_CONTENT_OWNER_IDS` | no | Defaults to `U0A2VGT6NRL` (Millie) |
 | `SLACK_CONTENT_DAYS` | no | Defaults to `120` |
@@ -242,11 +286,12 @@ written anywhere else; HubSpot, Slack and Lineage are read-only.
 | --- | --- |
 | `index.html` | The page |
 | `content-dashboard.js` | Parsing, scoring, capacity and performance maths — pure, no DOM |
-| `content-dashboard.test.js` | 210 tests, fixtures taken from real channel messages and real Lineage numbers |
+| `content-dashboard.test.js` | 242 tests, fixtures taken from real channel messages, real Lineage activity-log lines and real Lineage numbers |
 | `netlify/functions/accounts.js` | The client book from HubSpot |
 | `netlify/functions/content-requests.js` | Reads Slack history + stored state |
 | `netlify/functions/content-request-write.js` | Writes per-request state |
 | `netlify/functions/lineage-analytics.js` | Reactions, comments, reposts, ICP rate per post |
+| `netlify/functions/lineage-drafts.js` | The drafts Millie wrote in Lineage, from its activity log |
 
 Run the tests with `npm test` (no dependencies).
 
@@ -254,6 +299,11 @@ Run the tests with `npm test` (no dependencies).
 
 ## Known limits
 
+- **The Lineage activity REST path is unconfirmed**, the same way the
+  analytics one is. The log's format is known and parsed against real
+  lines from it, and a payload that is not an activity log is rejected
+  rather than reported as "no drafts" — but the function has to guess
+  the path until `LINEAGE_ACTIVITY_URL` is set.
 - The Lineage analytics REST path is unconfirmed, and the surface used
   at build time did not return ICP rate — see `LINEAGE_POST_ANALYTICS_URL`
   above. Everything for ICP rate is wired and tested; it needs the right
