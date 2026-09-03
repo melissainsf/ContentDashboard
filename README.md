@@ -3,10 +3,19 @@
 A content request queue, capacity tracker, coverage view and performance
 report for the content role. Deploys to Netlify from this repo.
 
-Access is gated by **Netlify project visibility** (Project configuration →
-Visitor access), enforced at the edge. There is no app-level login: if the
-page loads, the visitor is already authenticated, and the `/api/*`
-functions are behind the same gate.
+Access is gated by **Google sign-in, restricted to `@virio.ai`**. The check
+that matters runs server-side: every `/api/*` function calls
+`requireVirioUser` (`netlify/functions/_auth.js`), which asks Supabase who
+the caller's access token belongs to and refuses anything off the allowed
+domain. The sign-in screen decides what is *shown*; the functions decide what
+is *served*. An earlier version had only the browser half, which hid the UI
+while leaving every client's name, MRR and churn risk readable by anyone with
+the URL.
+
+- **401** — no usable token. Not signed in, or the session expired.
+- **403** — a real Google account outside `@virio.ai`.
+- **500** — `SUPABASE_URL` / `SUPABASE_ANON_KEY` unset. It fails closed: a
+  deploy with no auth configuration serves nothing rather than everything.
 
 It exists to answer four questions that came out of the 2026-08-13
 Melissa ↔ Millie sync:
@@ -254,14 +263,13 @@ posts, so there is no denominator for an engagement *rate* either.
 Reactions, comments and reposts are real numbers; anything claiming reach
 would be invented.
 
-**ICP rate may be blank.** The column and the roll-ups are built and
-tested, but the per-post Lineage API surface reachable at build time did
-not return an ICP rate — it appears on the Lineage Analytics tab in the
-web app. The function reads it from any of the plausible field names and
-leaves it `null` when absent, rendering as `—` rather than a made-up
-percentage. Point `LINEAGE_POST_ANALYTICS_URL` at the endpoint behind that
-Analytics tab and the column fills in. The response says plainly when ICP
-rate is not coming through, so a column of dashes never reads as broken.
+**ICP rate is always blank, on purpose.** Lineage's per-post analytics
+endpoint (`/api/analytics/{postId}`) does not return an ICP rate — that
+number only exists inside aggregate ICP reports, matched to a post by date
+rather than by post id, which is not reliable enough to show per post. The
+function reads it from any of the plausible field names anyway, in case
+Lineage ever adds it to that endpoint, and leaves it `null` when absent,
+rendering as `—` rather than a made-up percentage.
 
 Engagement counts sync periodically from LinkedIn and are typically hours
 stale — both views show the sync time.
@@ -280,14 +288,49 @@ The channel is private, so a Slack app must be created and invited.
 3. Install to the workspace and copy the `xoxb-…` bot token.
 4. In Slack: `/invite @<your-app>` inside `#content-support`.
 
+### Redirect URLs, and why nothing is hardcoded
+
+The sign-in redirect is `window.location.origin + '/auth/callback'`. The
+origin is never configured — it is wherever the page is being served from, so
+`localhost` on any port, the production site and every deploy preview all work
+with no code change. `netlify.toml` rewrites that path to the same page, which
+reads the OAuth code and then puts the address bar back to `/`.
+
+Only the *path* is fixed, and deliberately: the auth project matches redirect
+URLs on origin **and** path, so a single entry of
+`http://localhost:*/auth/callback` covers every local port precisely because
+the path is the constant half. `AUTH_CALLBACK_PATH` can change it, but the
+rewrite in `netlify.toml` has to change with it.
+
+Each deployed origin still needs one entry in the auth project (Supabase →
+Authentication → URL Configuration → Redirect URLs):
+
+| Environment | Entry |
+| --- | --- |
+| Local dev, any port | `http://localhost:*/auth/callback` (already present) |
+| Production | `https://<site>.netlify.app/auth/callback` |
+| Deploy previews | `https://deploy-preview-*--<site>.netlify.app/auth/callback` |
+
+Keep the wildcard bounded to this site. A blanket `https://*.netlify.app/**`
+would let any Netlify site in the world receive an OAuth code for a Virio
+user who was persuaded to visit it.
+
+If sign-in silently returns somewhere else, that is an allowlist miss. The
+page now names the exact entry that would fix it, rather than failing
+silently.
+
 ### Netlify environment variables
 
 | Variable | Required | Without it |
 | --- | --- | --- |
 | `HUBSPOT_TOKEN` | **yes** | No accounts load — the page fails loud |
 | `SLACK_BOT_TOKEN` | **yes** | No live requests; manual entry still works |
+| `SUPABASE_URL` | The auth project, `https://<ref>.supabase.co`. Used by the sign-in screen and by the server-side token check. |
+| `SUPABASE_ANON_KEY` | That project's public anon key. Public by design — it is served to the browser by `/api/auth-config` rather than committed, so a deploy pointed at another project needs no code change. |
+| `AUTH_ALLOWED_DOMAIN` | Optional, default `virio.ai`. The only domain allowed to sign in. |
+| `AUTH_CALLBACK_PATH` | Optional, default `/auth/callback`. Must match the rewrite in `netlify.toml` and the auth project's allowlist. |
 | `LINEAGE_API_KEY` | for performance | Post Performance tab says it is not connected |
-| `LINEAGE_POST_ANALYTICS_URL` | see below | Falls back to guessing the path |
+| `LINEAGE_POST_ANALYTICS_URL` | no | Defaults to the real endpoint, see below |
 | `LINEAGE_ACTIVITY_URL` | for self-started drafts | Falls back to guessing the path; Completed shows a banner |
 | `LINEAGE_AUTHOR_ID` | no | Defaults to Millie Hanson's Lineage user id |
 | `LINEAGE_ACTIVITY_EVENTS` | no | Defaults to `draft.created` |
@@ -300,15 +343,24 @@ The channel is private, so a Slack app must be created and invited.
 
 `HUBSPOT_TOKEN` needs `crm.objects.companies.read`.
 
-**`LINEAGE_POST_ANALYTICS_URL` needs confirming with whoever owns the
-Lineage API.** The per-post analytics data shape is known and handled, but
-the exact REST path was never confirmed, so the function tries a few
-plausible shapes and reports failure rather than pretending. Set it to the
-real path as a template and the guessing stops:
+**`LINEAGE_POST_ANALYTICS_URL`** defaults to Lineage's real per-post
+analytics endpoint, `{LINEAGE_API_BASE}/analytics/{postId}` — confirmed
+against Lineage's own `analytics-service.ts`. Set this env var only to
+override that default (for example against a staging Lineage instance);
+older guessed shapes stay as a fallback if the real path ever moves.
 
-```
-https://app.virio.ai/api/lineage/{company}/posts/{postId}/analytics
-```
+That endpoint scopes every lookup to a company id (uuid), but a request
+here only carries the company slug parsed from the pasted Lineage link.
+`lineage-analytics.js` maps slug → uuid via `lineage-company-ids.json` (a
+snapshot taken through the Lineage MCP's `list_companies` tool), and sends
+the resolved id as `?company_id=`. **This table goes stale** as clients
+are added or renamed in Lineage — if a client's Post Performance data is
+missing despite the post being published, re-run `list_companies` and
+refresh the table.
+
+See `docs/lineage-post-analytics.md` for the full request flow, why the
+URL alone isn't enough, and the evidence behind treating this snapshot as
+production data.
 
 `{company}` and `{postId}` are substituted per post.
 
@@ -354,19 +406,40 @@ written anywhere else; HubSpot, Slack and Lineage are read-only.
 
 Run the tests with `npm test` (no dependencies).
 
+### Running it locally
+
+The page is static, but the four `/api/*` routes are Netlify functions that
+need the site's environment variables (`LINEAGE_API_KEY`, `SLACK_BOT_TOKEN`,
+`HUBSPOT_TOKEN`). The Netlify CLI injects them from the deployed site, so
+there is no `.env` to keep in sync:
+
+```
+npx netlify-cli login     # opens a browser, once per machine
+npx netlify-cli link      # pick the Content Dashboard site, once per clone
+npm run dev               # serves the page and the functions on :8888
+```
+
+`npm run env` lists what the linked site has set, which is the quickest way
+to check whether a variable is missing rather than wrong.
+
 ---
 
 ## Known limits
 
-- **The Lineage activity REST path is unconfirmed**, the same way the
-  analytics one is. The log's format is known and parsed against real
-  lines from it, and a payload that is not an activity log is rejected
-  rather than reported as "no drafts" — but the function has to guess
-  the path until `LINEAGE_ACTIVITY_URL` is set.
-- The Lineage analytics REST path is unconfirmed, and the surface used
-  at build time did not return ICP rate — see `LINEAGE_POST_ANALYTICS_URL`
-  above. Everything for ICP rate is wired and tested; it needs the right
-  endpoint.
+- **The Lineage activity REST path is unconfirmed.** The log's format is
+  known and parsed against real lines from it, and a payload that is not an
+  activity log is rejected rather than reported as "no drafts" — but the
+  function has to guess the path until `LINEAGE_ACTIVITY_URL` is set. The
+  per-post feed at `/api/drafts/{postId}/events`, which "Worked by" uses, is
+  confirmed but does not answer this question: it is keyed by post, and this
+  feature needs one author's drafts across a company.
+- ICP rate is blank for some posts by design: it comes from a generated
+  report keyed by publish date, so a day with two posts, a client with no
+  report, and a post that was never scheduled all render `—` rather than a
+  guessed number. See `docs/lineage-post-analytics.md`.
+- "Worked by" names whoever moved a post through review, approval,
+  scheduling and publishing. Editing a draft is not recorded in the feed
+  Lineage exposes, so a post someone only rewrote shows nobody.
 - A prose request naming **two** clients with no links attaches to one of
   them; the other is visible in the text but not counted separately.
 - Thread replies are treated as conversation, not as new requests.

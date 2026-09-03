@@ -804,6 +804,294 @@ eq('undated work cannot be placed in a week', CD.completedSummary(
 eq('monthKey formats a two-digit month', CD.monthKey('2026-09-02T00:00:00Z'), '2026-09');
 ok('monthKey rejects a bad date', CD.monthKey('not a date') === null);
 
+// ── Post attribution and ICP ───────────────────────────────────
+//
+// Lineage post records carry no author, so "who worked this" is read off
+// each post's lifecycle feed and the ICP rate off a generated report. Both
+// live in the Netlify function; the pure parts of them are tested here.
+section('Post attribution and ICP');
+
+const LA = require('./netlify/functions/lineage-analytics.js');
+
+// Real event shapes from GET /api/drafts/{id}/events.
+const FEED = [
+  { id: '1', type: 'draft.created', at: '2026-08-06T05:20:30Z',
+    actor: { id: 'u1', first_name: 'Emmett', last_name: 'Chen-Ran', email: 'emmett+service@virio.ai' }, payload: {} },
+  { id: '2', type: 'draft.status_changed', at: '2026-08-07T06:37:57Z',
+    actor: { id: 'u2', first_name: 'Millie', last_name: 'Hanson', email: 'millie+service@virio.ai' }, payload: {} },
+  { id: '3', type: 'draft.scheduled', at: '2026-08-07T06:37:56Z',
+    actor: { id: 'u2', first_name: 'Millie', last_name: 'Hanson', email: 'millie+service@virio.ai' },
+    payload: { to_scheduled_at: '2026-08-07T16:00:00+00:00', from_scheduled_at: '2026-08-06T16:00:00+00:00' } },
+  { id: '4', type: 'draft.approved', at: '2026-08-07T07:00:00Z',
+    actor: { id: 'c1', first_name: 'Dana', last_name: 'Client', email: 'dana@customer.com' }, payload: {} },
+  { id: '5', type: 'draft.approval_history_archived', at: '2026-08-27T05:00:06Z', actor: null, payload: {} }
+];
+
+const workedRank = LA.rankWorkedBy(FEED);
+eq('only Virio people are named', workedRank.length, 2);
+eq('the most involved teammate ranks first', workedRank[0].name, 'Millie Hanson');
+eq('...with a count of what they did', workedRank[0].events, 2);
+eq('the client who approved is not one of ours', workedRank.filter(w => /customer/.test(w.email)).length, 0);
+ok('an event with no actor does not crash the ranking', LA.rankWorkedBy([{ id: 'x', type: 'draft.created', at: 'now', actor: null }]).length === 0);
+eq('a self-managed post names nobody', LA.rankWorkedBy([]).length, 0);
+
+// Nearly every teammate has two Lineage accounts — one in our own tenant and
+// a `+service` seat inside the client's — and a post carries events from both.
+const twoAccounts = LA.rankWorkedBy([
+  { id: '1', type: 'draft.created', at: '2026-08-28T17:00:00Z',
+    actor: { id: 'a', first_name: 'Maxwell', last_name: 'Zinkievich', email: 'maxwell@virio.ai' }, payload: {} },
+  { id: '2', type: 'draft.scheduled', at: '2026-08-28T17:51:14Z',
+    actor: { id: 'b', first_name: 'Maxwell', last_name: 'Zinkievich', email: 'maxwell+service@virio.ai' }, payload: {} },
+  { id: '3', type: 'draft.status_changed', at: '2026-08-28T18:00:00Z',
+    actor: { id: 'c', first_name: 'Emily', last_name: 'Chen', email: 'emily+service@virio.ai' }, payload: {} }
+]);
+eq('one person with two accounts is named once', twoAccounts.length, 2);
+eq('...and their work on both accounts is added up', twoAccounts[0].events, 2);
+eq('...under the plain address', twoAccounts[0].email, 'maxwell@virio.ai');
+eq('a second teammate is still separate', twoAccounts[1].name, 'Emily Chen');
+
+// The publish date is the join key to the ICP report, and it comes from the
+// latest schedule event rather than the first.
+eq('the latest schedule wins', LA.scheduledDate(FEED), '2026-08-07T16:00:00+00:00');
+ok('a post published without scheduling has no date', LA.scheduledDate([FEED[0]]) === null || LA.scheduledDate([FEED[0]]) === undefined);
+
+// ICP reports are per FOC and keyed by publish date, never by post id.
+const icpMerged = LA.mergeIcpReports([
+  { created_at: '2026-08-29T21:42:28Z', result_json: {
+      summary: { icp_engagement_rate: 0.1632 },
+      post_analysis: [
+        { posted_at: '2026-04-15', icp_rate: 0.029, topic: 'a' },
+        { posted_at: '2026-04-18', icp_rate: 0.11, topic: 'b' } ] } },
+  { created_at: '2026-08-20T10:00:00Z', result_json: {
+      summary: { icp_engagement_rate: 0.2 },
+      post_analysis: [
+        { posted_at: '2026-04-18', icp_rate: 0.4, topic: 'c' },
+        { posted_at: '2026-05-02', icp_rate: 0.07, topic: 'd' } ] } }
+]);
+eq('a date claimed by one post keeps its rate', icpMerged.byDate['2026-04-15'], 0.029);
+ok('a date two posts share is blanked rather than guessed', icpMerged.byDate['2026-04-18'] === null);
+eq('a second FOC report still contributes its own dates', icpMerged.byDate['2026-05-02'], 0.07);
+eq('the company-level rate comes from the newest report', icpMerged.summaryRate, 0.1632);
+eq('both reports counted', icpMerged.reportCount, 2);
+eq('no report means no dates', Object.keys(LA.mergeIcpReports([]).byDate).length, 0);
+
+// A post can be attributed before it has any engagement to show.
+const attributedOnly = CD.attachPerformance(
+  [{ id: 'x', postRefs: [{ postId: 'p1' }] }],
+  { p1: { measured: false, workedBy: [{ name: 'Millie Hanson', email: 'millie+service@virio.ai', events: 3 }] } });
+eq('an unpublished post still names who worked it', attributedOnly[0].workedBy[0].name, 'Millie Hanson');
+ok('...but reports no performance', attributedOnly[0].performance === null);
+
+const twoHands = CD.attachPerformance(
+  [{ id: 'x', postRefs: [{ postId: 'p1' }, { postId: 'p2' }] }],
+  { p1: { likes: 1, comments: 0, reposts: 0, measured: true,
+          workedBy: [{ name: 'Millie Hanson', email: 'millie+service@virio.ai', events: 3 }] },
+    p2: { likes: 1, comments: 0, reposts: 0, measured: true,
+          workedBy: [{ name: 'Millie Hanson', email: 'millie+service@virio.ai', events: 2 },
+                     { name: 'Max Zinkievich', email: 'maxwell+service@virio.ai', events: 4 }] } });
+eq('one request, two posts, three hands deduped to two people', twoHands[0].workedBy.length, 2);
+eq('the busiest across both posts leads', twoHands[0].workedBy[0].name, 'Millie Hanson');
+eq('...counting their work on every post in the request', twoHands[0].workedBy[0].events, 5);
+eq('performance carries the same list for the table', twoHands[0].performance.workedBy.length, 2);
+
+// ── The API gate ───────────────────────────────────────────────
+//
+// Every /api/* function refuses before it reads anything. This is the check
+// that matters — the sign-in screen in the page only decides what is shown,
+// and an earlier version of this dashboard had nothing else, which left the
+// client book readable by anyone with the URL.
+section('The API gate');
+
+const AUTH = require('./netlify/functions/_auth.js');
+
+const GATED = [
+  ['accounts', require('./netlify/functions/accounts.js')],
+  ['content-requests', require('./netlify/functions/content-requests.js')],
+  ['content-request-write', require('./netlify/functions/content-request-write.js')],
+  ['lineage-drafts', require('./netlify/functions/lineage-drafts.js')],
+  ['lineage-analytics', require('./netlify/functions/lineage-analytics.js')]
+];
+
+function withAuthEnv(url, key, domain) {
+  process.env.SUPABASE_URL = url;
+  process.env.SUPABASE_ANON_KEY = key;
+  if (domain) process.env.AUTH_ALLOWED_DOMAIN = domain;
+  else delete process.env.AUTH_ALLOWED_DOMAIN;
+}
+
+function stubAuthUser(email) {
+  global.fetch = async (u) => {
+    if (String(u).includes('/auth/v1/user')) {
+      return email
+        ? { ok: true, status: 200, json: async () => ({ id: 'u1', email }) }
+        : { ok: false, status: 401, json: async () => ({ error: 'bad token' }) };
+    }
+    throw new Error('the gate must refuse before any upstream call: ' + u);
+  };
+}
+
+const authTests = (async () => {
+  withAuthEnv('https://auth.test', 'anon-key');
+
+  // No token at all.
+  stubAuthUser('millie@virio.ai');
+  for (const [name, fn] of GATED) {
+    const res = await fn.handler({ httpMethod: 'POST', headers: {}, body: '{}' });
+    eq(name + ' refuses a caller with no token', res.statusCode, 401);
+  }
+
+  // A token Supabase does not recognise.
+  stubAuthUser(null);
+  const stale = await GATED[0][1].handler({ httpMethod: 'GET', headers: { authorization: 'Bearer expired' } });
+  eq('an unrecognised token is 401, not 403', stale.statusCode, 401);
+
+  // A real Google account outside the domain. 403, not 401: this person is
+  // signed in and retrying will not help them.
+  stubAuthUser('someone@gmail.com');
+  const outsider = await GATED[0][1].handler({ httpMethod: 'GET', headers: { authorization: 'Bearer ok' } });
+  eq('a real account outside the domain is refused', outsider.statusCode, 403);
+  ok('...and is told why', /virio\.ai/.test(outsider.body));
+
+  // A lookalike domain must not pass on a suffix match.
+  stubAuthUser('attacker@notvirio.ai');
+  const lookalike = await GATED[0][1].handler({ httpMethod: 'GET', headers: { authorization: 'Bearer ok' } });
+  eq('a lookalike domain is refused', lookalike.statusCode, 403);
+
+  // A missing auth configuration fails closed, not open.
+  withAuthEnv('', '');
+  stubAuthUser('millie@virio.ai');
+  const unconfigured = await GATED[0][1].handler({ httpMethod: 'GET', headers: { authorization: 'Bearer ok' } });
+  eq('an unconfigured deploy refuses rather than serving the client book', unconfigured.statusCode, 500);
+
+  // The allowed domain is configurable, and the check follows it.
+  withAuthEnv('https://auth.test', 'anon-key', 'example.com');
+  stubAuthUser('someone@example.com');
+  const configured = await AUTH.requireVirioUser({ headers: { authorization: 'Bearer ok' } });
+  ok('the allowed domain can be changed by env var', configured.ok === true);
+  stubAuthUser('millie@virio.ai');
+  const nowRefused = await AUTH.requireVirioUser({ headers: { authorization: 'Bearer ok' } });
+  eq('...and the old domain then stops working', nowRefused.response.statusCode, 403);
+
+  withAuthEnv('https://auth.test', 'anon-key');
+})();
+
+// The callback path is the half of the redirect that the auth allowlist
+// matches on, so it has to be stable and settable without a code change.
+// The origin half is never configured — the browser supplies it.
+section('The OAuth callback path');
+
+eq('defaults to the path the allowlist already permits', (delete process.env.AUTH_CALLBACK_PATH, AUTH.callbackPath()), '/auth/callback');
+process.env.AUTH_CALLBACK_PATH = 'oauth/return';
+eq('a path given without a leading slash still resolves', AUTH.callbackPath(), '/oauth/return');
+process.env.AUTH_CALLBACK_PATH = '/oauth/return';
+eq('...and one with a slash is left alone', AUTH.callbackPath(), '/oauth/return');
+delete process.env.AUTH_CALLBACK_PATH;
+
+const cfgFn = require('./netlify/functions/auth-config.js');
+const cfgOut = (async () => {
+  process.env.SUPABASE_URL = 'https://auth.test';
+  process.env.SUPABASE_ANON_KEY = 'anon-key';
+  const res = await cfgFn.handler({ httpMethod: 'GET', headers: {} });
+  const body = JSON.parse(res.body);
+  eq('the sign-in screen can read the config without a session', res.statusCode, 200);
+  eq('...and is told which path to come back to', body.callbackPath, '/auth/callback');
+  eq('...and which domain is allowed', body.allowedDomain, 'virio.ai');
+  ok('...and is never handed a server-side secret', body.lineageApiKey === undefined && body.hubspotToken === undefined);
+})();
+
+// ── The Lineage function, end to end ───────────────────────────
+//
+// Three upstream surfaces have to line up for one row: engagement counts,
+// the lifecycle feed, and the ICP report. Stub all three and check the
+// merge, including the case that used to blank the whole tab — the first
+// post in the batch being one that isn't published yet.
+section('The Lineage function, end to end');
+
+const COMPANY_IDS = require('./netlify/functions/lineage-company-ids.json');
+const SLUG = Object.keys(COMPANY_IDS)[0];
+const LIVE = 'aaaaaaaa-0000-4000-8000-000000000001';
+const UNPUBLISHED = 'bbbbbbbb-0000-4000-8000-000000000002';
+
+function stubUpstream() {
+  const json = (body) => ({ ok: true, status: 200, json: async () => body });
+  global.fetch = async (url) => {
+    // The gate runs first, on every call.
+    if (String(url).includes('/auth/v1/user')) return json({ id: 'u1', email: 'millie@virio.ai' });
+    if (url.includes('/analytics/' + LIVE)) {
+      return json({ draft_id: LIVE, likes: 93, comments: 6, shares: 2, synced_at: '2026-08-15T09:57:05Z' });
+    }
+    if (url.includes('/analytics/' + UNPUBLISHED)) {
+      // The route's own not-found body, which is how a right URL with no
+      // data is told apart from a wrong URL.
+      return { ok: false, status: 404, json: async () => ({ error: 'Analytics not found' }) };
+    }
+    if (url.includes('/drafts/' + LIVE + '/events')) {
+      return json({ events: [
+        { id: '1', type: 'draft.created', at: '2026-07-19T05:00:00Z',
+          actor: { id: 'u1', first_name: 'Millie', last_name: 'Hanson', email: 'millie+service@virio.ai' }, payload: {} },
+        { id: '2', type: 'draft.scheduled', at: '2026-07-20T05:00:00Z',
+          actor: { id: 'u1', first_name: 'Millie', last_name: 'Hanson', email: 'millie+service@virio.ai' },
+          payload: { to_scheduled_at: '2026-07-21T16:00:00+00:00' } },
+        { id: '3', type: 'draft.approved', at: '2026-07-20T06:00:00Z',
+          actor: { id: 'c1', first_name: 'Dana', last_name: 'Client', email: 'dana@customer.com' }, payload: {} } ] });
+    }
+    if (url.includes('/drafts/' + UNPUBLISHED + '/events')) {
+      return json({ events: [
+        { id: '9', type: 'draft.status_changed', at: '2026-07-22T05:00:00Z',
+          actor: { id: 'u2', first_name: 'Max', last_name: 'Zinkievich', email: 'maxwell+service@virio.ai' }, payload: {} } ] });
+    }
+    if (url.includes('/api/reports?')) {
+      return json({ reports: [
+        { id: 'r1', status: 'completed', user_id: 'foc1', created_at: '2026-08-29T21:00:00Z' },
+        { id: 'r0', status: 'completed', user_id: 'foc1', created_at: '2026-07-01T21:00:00Z' } ], total: 2 });
+    }
+    if (url.includes('/api/reports/r1')) {
+      return json({ report: { id: 'r1', created_at: '2026-08-29T21:00:00Z', result_json: {
+        summary: { icp_engagement_rate: 0.1632 },
+        post_analysis: [ { posted_at: '2026-07-21', icp_rate: 0.345, topic: 'x' } ] } } });
+    }
+    throw new Error('unstubbed upstream call: ' + url);
+  };
+}
+
+async function runFunction(order) {
+  stubUpstream();
+  process.env.LINEAGE_API_KEY = 'jq_live_test';
+  process.env.SUPABASE_URL = 'https://auth.test';
+  process.env.SUPABASE_ANON_KEY = 'anon-key';
+  delete process.env.AUTH_ALLOWED_DOMAIN;
+  const res = await LA.handler({
+    httpMethod: 'POST',
+    headers: { authorization: 'Bearer signed-in' },
+    body: JSON.stringify({ posts: order.map(postId => ({ company: SLUG, postId })) })
+  });
+  return JSON.parse(res.body);
+}
+
+Promise.all([authTests, cfgOut]).then(() => runFunction([LIVE, UNPUBLISHED])).then(async out => {
+  const live = out.analytics[LIVE];
+  eq('engagement comes back for the published post', live.likes, 93);
+  eq('the teammate who worked it is named', live.workedBy[0].name, 'Millie Hanson');
+  eq('the client who approved is not counted as ours', live.workedBy.length, 1);
+  eq('the schedule supplies the publish date the analytics route omits', String(live.postedAt).slice(0, 10), '2026-07-21');
+  eq('the ICP report is matched on that date and rendered as a percentage', live.icpRate, 34.5);
+
+  const dark = out.analytics[UNPUBLISHED];
+  eq('an unpublished post is still attributed', dark.workedBy[0].name, 'Max Zinkievich');
+  ok('...but is not counted as measured', dark.measured === false);
+  eq('only the published post counts toward "measured"', out.matched, 1);
+  eq('both posts count toward attribution', out.attributed, 2);
+
+  // Regression: probing the analytics URL against an unpublished post used
+  // to look identical to a wrong URL, so the tab reported itself broken.
+  const reversed = await runFunction([UNPUBLISHED, LIVE]);
+  ok('an unpublished post first in the batch does not disconnect the tab', reversed.configured === true);
+  eq('...and the published post is still measured', reversed.matched, 1);
+
+  console.log('\n' + (failed === 0 ? '\u2713 ' : '\u2717 ') + passed + ' passed, ' + failed + ' failed');
+  process.exit(failed === 0 ? 0 : 1);
+});
+
 // ── Summary ────────────────────────────────────────────────────
-console.log('\n' + (failed === 0 ? '✓ ' : '✗ ') + passed + ' passed, ' + failed + ' failed');
-process.exit(failed === 0 ? 0 : 1);
+// Printed by the async section above, once the stubbed function calls have
+// settled — otherwise the count would be reported before they ran.

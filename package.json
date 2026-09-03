@@ -7,6 +7,8 @@
     "@netlify/blobs": "^8.1.0"
   },
   "scripts": {
-    "test": "node content-dashboard.test.js"
+    "test": "node content-dashboard.test.js",
+    "dev": "npx --yes netlify-cli dev",
+    "env": "npx --yes netlify-cli env:list"
   }
 }

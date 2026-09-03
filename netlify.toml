@@ -3,6 +3,31 @@
 # Two data sources, both owned by this site: HubSpot for the client book,
 # Slack for the request feed. Nothing else.
 
+# Both paths were implicit before and resolve to the same places on deploy.
+# They are written down because `netlify dev` needs them to serve the root
+# page and the functions together.
+[build]
+  publish = "."
+
+[functions]
+  directory = "netlify/functions"
+
+# The OAuth landing path. The auth project allowlists redirect URLs by path,
+# so sign-in comes back here rather than to "/" — `http://localhost:*/auth/callback`
+# is already permitted for every port, which is what makes local dev work
+# without touching production auth settings. The page served is the same one;
+# it reads the code out of the URL and then rewrites the address bar to "/".
+[[redirects]]
+  from = "/auth/callback"
+  to = "/index.html"
+  status = 200
+
+# Public on purpose: the sign-in screen reads it to build a session.
+[[redirects]]
+  from = "/api/auth-config"
+  to = "/.netlify/functions/auth-config"
+  status = 200
+
 [[redirects]]
   from = "/api/accounts"
   to = "/.netlify/functions/accounts"
