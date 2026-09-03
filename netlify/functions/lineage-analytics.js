@@ -73,7 +73,12 @@ function companyIdFor(slug) {
 const ICP_CACHE_TTL_MS = 15 * 60 * 1000;
 const icpCache = new Map();
 
+const { requireVirioUser } = require('./_auth.js');
+
 exports.handler = async function (event) {
+  const gate = await requireVirioUser(event);
+  if (!gate.ok) return gate.response;
+
   if (event.httpMethod !== 'POST') return reply(405, { error: 'POST only' });
 
   let body;

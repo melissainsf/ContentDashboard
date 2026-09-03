@@ -3,10 +3,19 @@
 A content request queue, capacity tracker, coverage view and performance
 report for the content role. Deploys to Netlify from this repo.
 
-Access is gated by **Netlify project visibility** (Project configuration →
-Visitor access), enforced at the edge. There is no app-level login: if the
-page loads, the visitor is already authenticated, and the `/api/*`
-functions are behind the same gate.
+Access is gated by **Google sign-in, restricted to `@virio.ai`**. The check
+that matters runs server-side: every `/api/*` function calls
+`requireVirioUser` (`netlify/functions/_auth.js`), which asks Supabase who
+the caller's access token belongs to and refuses anything off the allowed
+domain. The sign-in screen decides what is *shown*; the functions decide what
+is *served*. An earlier version had only the browser half, which hid the UI
+while leaving every client's name, MRR and churn risk readable by anyone with
+the URL.
+
+- **401** — no usable token. Not signed in, or the session expired.
+- **403** — a real Google account outside `@virio.ai`.
+- **500** — `SUPABASE_URL` / `SUPABASE_ANON_KEY` unset. It fails closed: a
+  deploy with no auth configuration serves nothing rather than everything.
 
 It exists to answer four questions that came out of the 2026-08-13
 Melissa ↔ Millie sync:
@@ -279,12 +288,47 @@ The channel is private, so a Slack app must be created and invited.
 3. Install to the workspace and copy the `xoxb-…` bot token.
 4. In Slack: `/invite @<your-app>` inside `#content-support`.
 
+### Redirect URLs, and why nothing is hardcoded
+
+The sign-in redirect is `window.location.origin + '/auth/callback'`. The
+origin is never configured — it is wherever the page is being served from, so
+`localhost` on any port, the production site and every deploy preview all work
+with no code change. `netlify.toml` rewrites that path to the same page, which
+reads the OAuth code and then puts the address bar back to `/`.
+
+Only the *path* is fixed, and deliberately: the auth project matches redirect
+URLs on origin **and** path, so a single entry of
+`http://localhost:*/auth/callback` covers every local port precisely because
+the path is the constant half. `AUTH_CALLBACK_PATH` can change it, but the
+rewrite in `netlify.toml` has to change with it.
+
+Each deployed origin still needs one entry in the auth project (Supabase →
+Authentication → URL Configuration → Redirect URLs):
+
+| Environment | Entry |
+| --- | --- |
+| Local dev, any port | `http://localhost:*/auth/callback` (already present) |
+| Production | `https://<site>.netlify.app/auth/callback` |
+| Deploy previews | `https://deploy-preview-*--<site>.netlify.app/auth/callback` |
+
+Keep the wildcard bounded to this site. A blanket `https://*.netlify.app/**`
+would let any Netlify site in the world receive an OAuth code for a Virio
+user who was persuaded to visit it.
+
+If sign-in silently returns somewhere else, that is an allowlist miss. The
+page now names the exact entry that would fix it, rather than failing
+silently.
+
 ### Netlify environment variables
 
 | Variable | Required | Without it |
 | --- | --- | --- |
 | `HUBSPOT_TOKEN` | **yes** | No accounts load — the page fails loud |
 | `SLACK_BOT_TOKEN` | **yes** | No live requests; manual entry still works |
+| `SUPABASE_URL` | The auth project, `https://<ref>.supabase.co`. Used by the sign-in screen and by the server-side token check. |
+| `SUPABASE_ANON_KEY` | That project's public anon key. Public by design — it is served to the browser by `/api/auth-config` rather than committed, so a deploy pointed at another project needs no code change. |
+| `AUTH_ALLOWED_DOMAIN` | Optional, default `virio.ai`. The only domain allowed to sign in. |
+| `AUTH_CALLBACK_PATH` | Optional, default `/auth/callback`. Must match the rewrite in `netlify.toml` and the auth project's allowlist. |
 | `LINEAGE_API_KEY` | for performance | Post Performance tab says it is not connected |
 | `LINEAGE_POST_ANALYTICS_URL` | no | Defaults to the real endpoint, see below |
 | `LINEAGE_ACTIVITY_URL` | for self-started drafts | Falls back to guessing the path; Completed shows a banner |

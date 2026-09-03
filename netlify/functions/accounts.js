@@ -30,7 +30,12 @@ const PROPERTIES = [
   'content_manager', 'csm', 'product', 'upsold_products', 'customer_journey'
 ];
 
-exports.handler = async function () {
+const { requireVirioUser } = require('./_auth.js');
+
+exports.handler = async function (event) {
+  const gate = await requireVirioUser(event);
+  if (!gate.ok) return gate.response;
+
   const token = process.env.HUBSPOT_TOKEN;
   if (!token) {
     return reply(500, { accounts: [], count: 0, error: 'HUBSPOT_TOKEN is not set.' });
