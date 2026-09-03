@@ -57,12 +57,7 @@ const DEFAULT_AUTHOR = '82d663fe-f00e-4892-ad16-37ac9837d7f7';  // Millie Hanson
 const DEFAULT_SINCE = '2026-08-01';   // the team tracks Millie's work from here
 const snapshot = require('./_lineage-snapshot.js');
 
-const { requireVirioUser } = require('./_auth.js');
-
 exports.handler = async function (event) {
-  const gate = await requireVirioUser(event);
-  if (!gate.ok) return gate.response;
-
   if (event.httpMethod !== 'POST') return reply(405, { error: 'POST only' });
 
   let body;

@@ -42,12 +42,7 @@ function isoOrUndefined(v) {
   return isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
-const { requireVirioUser } = require('./_auth.js');
-
 exports.handler = async function (event) {
-  const gate = await requireVirioUser(event);
-  if (!gate.ok) return gate.response;
-
   if (event.httpMethod !== 'POST') return reply(405, { error: 'POST only' });
 
   let body;

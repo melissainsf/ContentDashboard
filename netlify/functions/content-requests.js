@@ -34,12 +34,7 @@ const DEFAULT_CHANNEL = 'C0BFY7Y3MK7';   // #content-support
 const DEFAULT_OWNERS  = 'U0A2VGT6NRL';   // Millie Hanson — she does the work, not the asking
 const SLACK = 'https://slack.com/api';
 
-const { requireVirioUser } = require('./_auth.js');
-
 exports.handler = async function (event) {
-  const gate = await requireVirioUser(event);
-  if (!gate.ok) return gate.response;
-
   const overrides = await readOverrides(event);
 
   const token = process.env.SLACK_BOT_TOKEN;

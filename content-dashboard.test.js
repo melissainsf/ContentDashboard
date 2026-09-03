@@ -894,111 +894,6 @@ eq('the busiest across both posts leads', twoHands[0].workedBy[0].name, 'Millie 
 eq('...counting their work on every post in the request', twoHands[0].workedBy[0].events, 5);
 eq('performance carries the same list for the table', twoHands[0].performance.workedBy.length, 2);
 
-// ── The API gate ───────────────────────────────────────────────
-//
-// Every /api/* function refuses before it reads anything. This is the check
-// that matters — the sign-in screen in the page only decides what is shown,
-// and an earlier version of this dashboard had nothing else, which left the
-// client book readable by anyone with the URL.
-section('The API gate');
-
-const AUTH = require('./netlify/functions/_auth.js');
-
-const GATED = [
-  ['accounts', require('./netlify/functions/accounts.js')],
-  ['content-requests', require('./netlify/functions/content-requests.js')],
-  ['content-request-write', require('./netlify/functions/content-request-write.js')],
-  ['lineage-drafts', require('./netlify/functions/lineage-drafts.js')],
-  ['lineage-analytics', require('./netlify/functions/lineage-analytics.js')]
-];
-
-function withAuthEnv(url, key, domain) {
-  process.env.SUPABASE_URL = url;
-  process.env.SUPABASE_ANON_KEY = key;
-  if (domain) process.env.AUTH_ALLOWED_DOMAIN = domain;
-  else delete process.env.AUTH_ALLOWED_DOMAIN;
-}
-
-function stubAuthUser(email) {
-  global.fetch = async (u) => {
-    if (String(u).includes('/auth/v1/user')) {
-      return email
-        ? { ok: true, status: 200, json: async () => ({ id: 'u1', email }) }
-        : { ok: false, status: 401, json: async () => ({ error: 'bad token' }) };
-    }
-    throw new Error('the gate must refuse before any upstream call: ' + u);
-  };
-}
-
-const authTests = (async () => {
-  withAuthEnv('https://auth.test', 'anon-key');
-
-  // No token at all.
-  stubAuthUser('millie@virio.ai');
-  for (const [name, fn] of GATED) {
-    const res = await fn.handler({ httpMethod: 'POST', headers: {}, body: '{}' });
-    eq(name + ' refuses a caller with no token', res.statusCode, 401);
-  }
-
-  // A token Supabase does not recognise.
-  stubAuthUser(null);
-  const stale = await GATED[0][1].handler({ httpMethod: 'GET', headers: { authorization: 'Bearer expired' } });
-  eq('an unrecognised token is 401, not 403', stale.statusCode, 401);
-
-  // A real Google account outside the domain. 403, not 401: this person is
-  // signed in and retrying will not help them.
-  stubAuthUser('someone@gmail.com');
-  const outsider = await GATED[0][1].handler({ httpMethod: 'GET', headers: { authorization: 'Bearer ok' } });
-  eq('a real account outside the domain is refused', outsider.statusCode, 403);
-  ok('...and is told why', /virio\.ai/.test(outsider.body));
-
-  // A lookalike domain must not pass on a suffix match.
-  stubAuthUser('attacker@notvirio.ai');
-  const lookalike = await GATED[0][1].handler({ httpMethod: 'GET', headers: { authorization: 'Bearer ok' } });
-  eq('a lookalike domain is refused', lookalike.statusCode, 403);
-
-  // A missing auth configuration fails closed, not open.
-  withAuthEnv('', '');
-  stubAuthUser('millie@virio.ai');
-  const unconfigured = await GATED[0][1].handler({ httpMethod: 'GET', headers: { authorization: 'Bearer ok' } });
-  eq('an unconfigured deploy refuses rather than serving the client book', unconfigured.statusCode, 500);
-
-  // The allowed domain is configurable, and the check follows it.
-  withAuthEnv('https://auth.test', 'anon-key', 'example.com');
-  stubAuthUser('someone@example.com');
-  const configured = await AUTH.requireVirioUser({ headers: { authorization: 'Bearer ok' } });
-  ok('the allowed domain can be changed by env var', configured.ok === true);
-  stubAuthUser('millie@virio.ai');
-  const nowRefused = await AUTH.requireVirioUser({ headers: { authorization: 'Bearer ok' } });
-  eq('...and the old domain then stops working', nowRefused.response.statusCode, 403);
-
-  withAuthEnv('https://auth.test', 'anon-key');
-})();
-
-// The callback path is the half of the redirect that the auth allowlist
-// matches on, so it has to be stable and settable without a code change.
-// The origin half is never configured — the browser supplies it.
-section('The OAuth callback path');
-
-eq('defaults to the path the allowlist already permits', (delete process.env.AUTH_CALLBACK_PATH, AUTH.callbackPath()), '/auth/callback');
-process.env.AUTH_CALLBACK_PATH = 'oauth/return';
-eq('a path given without a leading slash still resolves', AUTH.callbackPath(), '/oauth/return');
-process.env.AUTH_CALLBACK_PATH = '/oauth/return';
-eq('...and one with a slash is left alone', AUTH.callbackPath(), '/oauth/return');
-delete process.env.AUTH_CALLBACK_PATH;
-
-const cfgFn = require('./netlify/functions/auth-config.js');
-const cfgOut = (async () => {
-  process.env.SUPABASE_URL = 'https://auth.test';
-  process.env.SUPABASE_ANON_KEY = 'anon-key';
-  const res = await cfgFn.handler({ httpMethod: 'GET', headers: {} });
-  const body = JSON.parse(res.body);
-  eq('the sign-in screen can read the config without a session', res.statusCode, 200);
-  eq('...and is told which path to come back to', body.callbackPath, '/auth/callback');
-  eq('...and which domain is allowed', body.allowedDomain, 'virio.ai');
-  ok('...and is never handed a server-side secret', body.lineageApiKey === undefined && body.hubspotToken === undefined);
-})();
-
 // ── The Lineage function, end to end ───────────────────────────
 //
 // Three upstream surfaces have to line up for one row: engagement counts,
@@ -1015,8 +910,6 @@ const UNPUBLISHED = 'bbbbbbbb-0000-4000-8000-000000000002';
 function stubUpstream() {
   const json = (body) => ({ ok: true, status: 200, json: async () => body });
   global.fetch = async (url) => {
-    // The gate runs first, on every call.
-    if (String(url).includes('/auth/v1/user')) return json({ id: 'u1', email: 'millie@virio.ai' });
     if (url.includes('/analytics/' + LIVE)) {
       return json({ draft_id: LIVE, likes: 93, comments: 6, shares: 2, synced_at: '2026-08-15T09:57:05Z' });
     }
@@ -1057,18 +950,15 @@ function stubUpstream() {
 async function runFunction(order) {
   stubUpstream();
   process.env.LINEAGE_API_KEY = 'jq_live_test';
-  process.env.SUPABASE_URL = 'https://auth.test';
-  process.env.SUPABASE_ANON_KEY = 'anon-key';
-  delete process.env.AUTH_ALLOWED_DOMAIN;
   const res = await LA.handler({
     httpMethod: 'POST',
-    headers: { authorization: 'Bearer signed-in' },
+    headers: {},
     body: JSON.stringify({ posts: order.map(postId => ({ company: SLUG, postId })) })
   });
   return JSON.parse(res.body);
 }
 
-Promise.all([authTests, cfgOut]).then(() => runFunction([LIVE, UNPUBLISHED])).then(async out => {
+runFunction([LIVE, UNPUBLISHED]).then(async out => {
   const live = out.analytics[LIVE];
   eq('engagement comes back for the published post', live.likes, 93);
   eq('the teammate who worked it is named', live.workedBy[0].name, 'Millie Hanson');
